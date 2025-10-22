@@ -1,0 +1,19 @@
+# behaviors/summarize.meta.yaml
+name: summarize
+description: Condense input text to <= N words.
+inputs: [text]
+outputs: [summary]
+args:
+  max_words:
+    type: int
+    default: 120
+success_checks:
+  - type: length_leq
+    target: summary
+    arg: max_words
+    weight: 1.0
+  - type: similarity_cosine
+    source: text
+    target: summary
+    threshold: 0.70
+    weight: 0.7
