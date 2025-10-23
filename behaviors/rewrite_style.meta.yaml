@@ -1,0 +1,20 @@
+name: rewrite_style
+description: Adjust the tone of text to either a professional or casual style.
+inputs: [text]
+outputs: [rewritten_text, tone]
+args:
+  tone:
+    type: str
+    default: professional
+keywords:
+  - rewrite
+  - style
+  - tone
+  - casual
+  - professional
+success_checks:
+  - type: tone_keyword_match
+    target: rewritten_text
+    arg: tone
+    weight: 1.0
+    threshold: 0.5

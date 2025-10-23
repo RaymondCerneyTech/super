@@ -91,6 +91,14 @@ class Interpreter:
                 self._resolve_value(entry.get("source"), ctx),
                 self._resolve_value(entry.get("target"), ctx),
             ]
+        if check_type == "tone_keyword_match":
+            tone_value = self._resolve_value(entry.get("arg"), ctx)
+            if tone_value is None:
+                tone_value = entry.get("tone")
+            return [
+                self._resolve_value(entry.get("target"), ctx),
+                tone_value,
+            ]
 
         args = entry.get("args")
         if isinstance(args, list):

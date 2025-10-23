@@ -51,3 +51,12 @@ def test_router_prefers_summarize_for_long_text(registry: BehaviorRegistry) -> N
 
     choice = router.choose(ctx)
     assert choice == "summarize"
+
+
+def test_router_prefers_rewrite_style_for_professional_tone(registry: BehaviorRegistry) -> None:
+    router = SimpleRouter(registry)
+    text = "Please rewrite this message in a professional tone with a polished style."
+    ctx = {"text": text, "data": {"text": text}}
+
+    choice = router.choose(ctx)
+    assert choice == "rewrite_style"
