@@ -41,6 +41,7 @@ class Interpreter:
             data[key] = value
 
         checks, reward = self._evaluate_checks(name, ctx, meta)
+        self._store_run_outcome(ctx, name, reward, checks)
 
         final_result: Result = dict(result)
         final_result["checks"] = checks
@@ -235,3 +236,26 @@ class Interpreter:
 
         # numeric literal
         return key
+
+    def _store_run_outcome(self, ctx: Context, behavior: str, reward: float, checks: Dict[str, float]) -> None:
+        if not isinstance(ctx, dict):
+            return
+
+        router_state = ctx.setdefault("router", {})
+        if isinstance(router_state, dict):
+            recent = router_state.setdefault("recent_results", {})
+            if isinstance(recent, dict):
+                recent[behavior] = {
+                    "reward": reward,
+                    "checks": checks,
+                }
+
+        data = ctx.setdefault("data", {})
+        if isinstance(data, dict):
+            rewards_map = data.setdefault("rewards", {})
+            if isinstance(rewards_map, dict):
+                rewards_map[behavior] = reward
+
+            checks_map = data.setdefault("checks", {})
+            if isinstance(checks_map, dict):
+                checks_map[behavior] = checks

@@ -8,6 +8,7 @@ from core.learn import BanditLearner
 from core.plans import run_plan
 from core.registry import BehaviorRegistry
 from core.router import SimpleRouter
+from core.interfaces import Context
 
 
 @pytest.fixture(scope="module")
@@ -102,6 +103,11 @@ def test_plan_summarize_then_rewrite(registry: BehaviorRegistry, interpreter: In
     result = run_plan(str(plan_path), ctx, registry, interpreter)
 
     assert all(step["result"].get("ok") for step in result["steps"])
+    behaviors = [step["behavior"] for step in result["steps"]]
+    assert behaviors == ["summarize", "rewrite_style"]
+    total_reward = result["total_reward"]
+    step_rewards = sum(float(step["result"].get("reward") or 0.0) for step in result["steps"])
+    assert total_reward == pytest.approx(step_rewards)
 
 
 def test_mean_centered_bias_not_both_maxed() -> None:
@@ -166,3 +172,60 @@ def test_feature_key_extraction() -> None:
 
     ctx_default = {"text": "Short prompt."}
     assert extract_feature_key(ctx_default) == "default"
+
+
+def test_router_fallback_on_failed_behavior(registry: BehaviorRegistry, interpreter: Interpreter, capsys: pytest.CaptureFixture[str]) -> None:
+    text = "This tone is impossible for the model to understand"
+    ctx: Context = {"text": text, "data": {"text": text}}
+
+    result = interpreter.execute("rewrite_style", ctx)
+    assert result["reward"] == 0.0
+
+    router = SimpleRouter(registry)
+    chosen = router.choose(ctx)
+    captured = capsys.readouterr().out
+
+    assert chosen != "rewrite_style"
+    assert "[router] fallback rewrite_style" in captured
+    audit = ctx.get("router_audit")
+    assert isinstance(audit, list) and audit[-1]["fallback_from"] == "rewrite_style"
+
+
+def test_rewrite_style_success_reward(interpreter: Interpreter) -> None:
+    text = "Please rewrite this memo in a professional tone for stakeholders."
+    ctx: Context = {"text": text, "data": {"text": text}}
+
+    result = interpreter.execute("rewrite_style", ctx)
+
+    assert result["ok"] is True
+    assert result["reward"] >= 1.0
+    rewritten = ctx["data"]["rewritten_text"]
+    assert "Please let me know" in rewritten
+
+
+def test_failed_behavior_updates_context(interpreter: Interpreter) -> None:
+    text = "This tone is impossible for the model to process"
+    ctx: Context = {"text": text, "data": {"text": text}}
+
+    result = interpreter.execute("rewrite_style", ctx)
+
+    assert result["reward"] == 0.0
+    router_state = ctx["router"]["recent_results"]["rewrite_style"]
+    assert router_state["reward"] == 0.0
+    assert ctx["data"]["rewards"]["rewrite_style"] == 0.0
+    tone_checks = ctx["data"]["checks"]["rewrite_style"]
+    assert tone_checks.get("tone_keyword_match") == 0.0
+    assert "could not satisfy" in " ".join(result.get("logs", []))
+
+
+def test_empty_input_handled(interpreter: Interpreter, registry: BehaviorRegistry, capsys: pytest.CaptureFixture[str]) -> None:
+    ctx: Context = {"text": "", "data": {"text": ""}}
+
+    result = interpreter.execute("rewrite_style", ctx)
+    assert result["ok"] is True
+    router = SimpleRouter(registry)
+    chosen = router.choose(ctx)
+    captured = capsys.readouterr().out
+
+    assert chosen in {"rewrite_style", "summarize"}
+    assert "[router] fallback" not in captured

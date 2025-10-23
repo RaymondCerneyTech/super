@@ -52,25 +52,29 @@ class SimpleRouter:
             raise ValueError("No behaviors available for routing.")
 
         primary = ranking[0][0]
-        if self._should_fallback(primary, ctx) and len(ranking) > 1:
+        should_fallback, reason = self._should_fallback(primary, ctx)
+        if should_fallback and len(ranking) > 1:
             fallback = ranking[1][0]
-            self._log_fallback(ctx, primary, fallback)
+            self._log_fallback(ctx, primary, fallback, reason)
             return fallback
         return primary
 
-    def _should_fallback(self, behavior: str, ctx: Context) -> bool:
+    def _should_fallback(self, behavior: str, ctx: Context) -> Tuple[bool, Optional[str]]:
         reward, checks = self._extract_last_result(behavior, ctx)
         if reward is not None and reward <= 0.0:
-            return True
+            return True, f"reward={reward}"
         if checks is not None:
-            return len(checks) == 0
+            if len(checks) == 0:
+                return True, "no checks produced"
 
         try:
             meta = self.registry.meta(behavior)
         except KeyError:
             meta = {}
         success_checks = meta.get("success_checks") or []
-        return not success_checks
+        if not success_checks:
+            return True, "no success checks configured"
+        return False, None
 
     def _extract_last_result(
         self, behavior: str, ctx: Context
@@ -117,7 +121,7 @@ class SimpleRouter:
 
         return reward_value, checks_value
 
-    def _log_fallback(self, ctx: Context, fallback_from: str, fallback_to: str) -> None:
+    def _log_fallback(self, ctx: Context, fallback_from: str, fallback_to: str, reason: Optional[str]) -> None:
         if not isinstance(ctx, dict):
             return
 
@@ -127,5 +131,11 @@ class SimpleRouter:
                 {
                     "fallback_from": fallback_from,
                     "fallback_to": fallback_to,
+                    "reason": reason,
                 }
             )
+
+        message = f"[router] fallback {fallback_from} -> {fallback_to}"
+        if reason:
+            message += f" ({reason})"
+        print(message)

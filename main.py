@@ -147,7 +147,8 @@ def main() -> None:
         save_adapter_biases(BIAS_FILE, initial_biases)
         return
 
-    ctx_template = build_context(args)
+    ctx = build_context(args)
+    ctx.setdefault("router", {})
     persisted_biases: Dict[str, Dict[str, float]] = {
         feature_key: dict(mapping) for feature_key, mapping in initial_biases.items()
     }
@@ -157,7 +158,11 @@ def main() -> None:
 
     for idx in range(iterations):
         iteration = idx + 1 if args.learn > 0 else None
-        ctx = copy.deepcopy(ctx_template)
+        base_data = ctx.setdefault("data", {})
+        base_data["text"] = args.text
+        base_data["max_words"] = args.max_words
+        ctx["text"] = args.text
+
         feature_key = extract_feature_key(ctx)
         router.adapters = dict(
             persisted_biases.get(feature_key, persisted_biases.get("default", {}))

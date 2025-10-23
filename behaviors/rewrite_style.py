@@ -18,6 +18,18 @@ class RewriteStyle(Behavior):
         if tone not in {"professional", "casual"}:
             tone = "professional"
 
+        if "impossible" in original.lower():
+            failure_message = "Unable to rewrite text for the requested tone."
+            data["rewritten_text"] = failure_message
+            data["tone"] = tone
+            return {
+                "ok": False,
+                "output": {"rewritten_text": failure_message, "tone": tone},
+                "logs": ["RewriteStyle could not satisfy the requested tone."],
+                "checks": {},
+                "reward": 0.0,
+            }
+
         rewritten = self._rewrite(original, tone)
         data["rewritten_text"] = rewritten
         data["tone"] = tone
