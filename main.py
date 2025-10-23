@@ -1,5 +1,4 @@
 import argparse
-import copy
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -11,6 +10,7 @@ from core.learn import BanditLearner
 from core.plans import run_plan
 from core.registry import BehaviorRegistry
 from core.router import SimpleRouter
+from core.rewards import aggregate_reward, ensure_reward_dict
 
 BIAS_FILE = Path("adapter_biases.json")
 
@@ -42,6 +42,18 @@ def save_adapter_biases(path: Path, biases: Dict[str, Dict[str, float]]) -> None
     path.write_text(json.dumps(serializable, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _format_reward(value: Any) -> str:
+    if isinstance(value, dict):
+        try:
+            return json.dumps({k: round(float(v), 3) for k, v in value.items()}, sort_keys=True)
+        except (TypeError, ValueError):
+            return json.dumps(value, sort_keys=True)
+    try:
+        return f"{float(value):.3f}"
+    except (TypeError, ValueError):
+        return "0.000"
+
+
 def build_context(args: argparse.Namespace) -> Dict[str, Any]:
     ctx: Dict[str, Any] = {
         "text": args.text,
@@ -66,7 +78,7 @@ def report_result(
         print(f"\nIteration {iteration}")
 
     print(f"Behavior: {chosen}")
-    print(f"Reward: {result.get('reward', 0.0):.3f}")
+    print(f"Reward: {_format_reward(result.get('reward'))}")
 
     checks = result.get("checks") or {}
     if checks:
@@ -171,11 +183,12 @@ def main() -> None:
         initial_data = dict(ctx["data"])
         chosen = router.choose(ctx)
         result = interpreter.execute(chosen, ctx)
-        reward = float(result.get("reward") or 0.0)
+        reward_dict = ensure_reward_dict(result.get("reward"))
+        result["reward"] = reward_dict
 
         report_result(chosen, result, ctx, initial_data, iteration)
 
-        learner.update(chosen, reward, feature_key)
+        learner.update(chosen, reward_dict, feature_key)
         new_biases = learner.adapter_biases(feature_key)
         if new_biases:
             persisted_biases[feature_key] = new_biases
@@ -189,7 +202,17 @@ def main() -> None:
                 "feature_key": feature_key,
                 "behavior": chosen,
                 "ok": bool(result.get("ok")),
-                "reward": reward,
+                "reward": reward_dict,
+            }
+        )
+        ctx.setdefault("plan_history", []).append(
+            {
+                "plan": "learn_loop" if args.learn > 0 else "single_run",
+                "step": iteration or 1,
+                "behavior": chosen,
+                "reward": reward_dict,
+                "checks": result.get("checks") or {},
+                "ok": bool(result.get("ok")),
             }
         )
 

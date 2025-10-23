@@ -1,0 +1,30 @@
+name: sentiment_analysis
+description: Classify sentiment polarity with a confidence score.
+inputs: [text]
+outputs: [sentiment, sentiment_score]
+keywords:
+  - sentiment
+  - emotion
+  - positive
+  - negative
+success_checks:
+  - type: similarity_cosine
+    source: text
+    target: sentiment
+    weight: 0.2
+    reward_key: coherence
+  - type: length_leq
+    target: sentiment
+    arg: max_words
+    weight: 0.2
+    reward_key: length
+  - type: tone_keyword_match
+    target: sentiment
+    arg: tone
+    weight: 0.2
+    reward_key: tone_alignment
+  - type: length_leq
+    target: sentiment_score
+    arg: 5
+    weight: 0.1
+    reward_key: score_bound

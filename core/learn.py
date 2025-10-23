@@ -4,7 +4,10 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Dict, Optional
 
+from core.rewards import aggregate_reward, ensure_reward_dict
+
 FeatureValues = Dict[str, float]
+FactorValues = Dict[str, Dict[str, Dict[str, float]]]
 
 
 class BanditLearner:
@@ -13,19 +16,31 @@ class BanditLearner:
     def __init__(self, alpha: float = 0.1) -> None:
         self.alpha = max(0.0, min(1.0, alpha))
         self.values: Dict[str, FeatureValues] = defaultdict(dict)
+        self.factor_values: FactorValues = defaultdict(lambda: defaultdict(dict))
 
     def update(
         self,
         chosen: str,
-        reward: float,
+        reward: Dict[str, float] | float,
         feature_key: str,
         alpha: Optional[float] = None,
     ) -> None:
         """Update the smoothed reward estimate for the chosen behavior and feature bucket."""
+        reward_dict = ensure_reward_dict(reward)
+        overall = aggregate_reward(reward_dict)
+
         bucket = self.values.setdefault(feature_key, {})
         a = self.alpha if alpha is None else max(0.0, min(1.0, alpha))
-        current = bucket.get(chosen, 0.0)
-        bucket[chosen] = (1 - a) * current + a * reward
+        current = bucket.get(chosen, overall)
+        bucket[chosen] = (1 - a) * current + a * overall
+
+        factor_bucket = self.factor_values.setdefault(feature_key, {})
+        behavior_factors = factor_bucket.setdefault(chosen, {})
+        for factor, value in reward_dict.items():
+            if factor == "overall":
+                continue
+            current_factor = behavior_factors.get(factor, value)
+            behavior_factors[factor] = (1 - a) * current_factor + a * value
 
     def adapter_biases(self, feature_key: str) -> Dict[str, float]:
         """Map EMAs within a feature bucket to mean-centered biases clamped to [-0.3, +0.3]."""

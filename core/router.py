@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from core.interfaces import Context
 from core.registry import BehaviorRegistry
+from core.rewards import aggregate_reward, ensure_reward_dict
 
 
 class SimpleRouter:
@@ -61,8 +62,9 @@ class SimpleRouter:
 
     def _should_fallback(self, behavior: str, ctx: Context) -> Tuple[bool, Optional[str]]:
         reward, checks = self._extract_last_result(behavior, ctx)
-        if reward is not None and reward <= 0.0:
-            return True, f"reward={reward}"
+        reward_value = self._aggregate_reward(reward)
+        if reward_value is not None and reward_value <= 0.0:
+            return True, f"reward={reward_value:.3f}"
         if checks is not None:
             if len(checks) == 0:
                 return True, "no checks produced"
@@ -78,7 +80,7 @@ class SimpleRouter:
 
     def _extract_last_result(
         self, behavior: str, ctx: Context
-    ) -> Tuple[Optional[float], Optional[Dict[str, Any]]]:
+    ) -> Tuple[Optional[Dict[str, float]], Optional[Dict[str, Any]]]:
         if not isinstance(ctx, dict):
             return None, None
 
@@ -90,28 +92,17 @@ class SimpleRouter:
         if isinstance(recent_results, dict):
             result = recent_results.get(behavior)
             if isinstance(result, dict):
-                reward = result.get("reward")
-                checks = result.get("checks")
-                reward_value = None
-                if reward is not None:
-                    try:
-                        reward_value = float(reward)
-                    except (TypeError, ValueError):
-                        reward_value = None
-                if isinstance(checks, dict):
-                    return reward_value, checks
-                return reward_value, None
+                reward = ensure_reward_dict(result.get("reward"))
+                checks = result.get("checks") if isinstance(result.get("checks"), dict) else None
+                return reward, checks
 
         data = ctx.get("data")
-        reward_value = None
+        reward_value: Optional[Dict[str, float]] = None
         checks_value: Optional[Dict[str, Any]] = None
         if isinstance(data, dict):
             reward_map = data.get("rewards")
             if isinstance(reward_map, dict) and behavior in reward_map:
-                try:
-                    reward_value = float(reward_map[behavior])
-                except (TypeError, ValueError):
-                    reward_value = None
+                reward_value = ensure_reward_dict(reward_map[behavior])
 
             checks_map = data.get("checks")
             if isinstance(checks_map, dict):
@@ -139,3 +130,8 @@ class SimpleRouter:
         if reason:
             message += f" ({reason})"
         print(message)
+
+    def _aggregate_reward(self, reward: Optional[Dict[str, float]]) -> Optional[float]:
+        if reward is None:
+            return None
+        return aggregate_reward(reward)

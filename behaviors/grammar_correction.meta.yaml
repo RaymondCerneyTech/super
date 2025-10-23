@@ -1,0 +1,24 @@
+name: grammar_correction
+description: Improve grammatical correctness of text.
+inputs: [text]
+outputs: [corrected_text]
+keywords:
+  - grammar
+  - correct
+  - proofread
+success_checks:
+  - type: similarity_cosine
+    source: text
+    target: corrected_text
+    weight: 0.4
+    reward_key: coherence
+  - type: length_leq
+    target: corrected_text
+    arg: max_words
+    weight: 0.3
+    reward_key: length
+  - type: tone_keyword_match
+    target: corrected_text
+    arg: tone
+    weight: 0.3
+    reward_key: tone_accuracy
