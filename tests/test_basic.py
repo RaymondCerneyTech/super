@@ -1,6 +1,7 @@
 import pytest
 
 from core.interpreter import Interpreter
+from core.learn import BanditLearner
 from core.registry import BehaviorRegistry
 from core.router import SimpleRouter
 
@@ -60,3 +61,20 @@ def test_router_prefers_rewrite_style_for_professional_tone(registry: BehaviorRe
 
     choice = router.choose(ctx)
     assert choice == "rewrite_style"
+
+
+def test_router_picks_rewrite_style_for_professional_tone(registry: BehaviorRegistry) -> None:
+    router = SimpleRouter(registry)
+    ctx = {"data": {"text": "Please rewrite this memo in a professional tone"}}
+
+    choice = router.choose(ctx)
+    assert choice == "rewrite_style"
+
+
+def test_bandit_bias_moves_toward_success() -> None:
+    learner = BanditLearner()
+    for _ in range(10):
+        learner.update("summarize", 1.0)
+
+    biases = learner.adapter_biases()
+    assert biases["summarize"] > 0.0
