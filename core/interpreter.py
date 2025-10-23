@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.checks import CHECKS
 from core.interfaces import Context, Result
+from core.metrics import compute_reward_factors
 from core.rewards import aggregate_reward, ensure_reward_dict, merge_rewards
 from core.registry import BehaviorRegistry
 
@@ -42,7 +43,8 @@ class Interpreter:
             data[key] = value
 
         checks, reward = self._evaluate_checks(name, ctx, meta)
-        self._store_run_outcome(ctx, name, reward, checks)
+        ok = bool(result.get("ok", True))
+        self._store_run_outcome(ctx, name, reward, checks, output, ok)
 
         final_result: Result = dict(result)
         final_result["checks"] = checks
@@ -248,17 +250,31 @@ class Interpreter:
         # numeric literal
         return key
 
-    def _store_run_outcome(self, ctx: Context, behavior: str, reward: Dict[str, float], checks: Dict[str, float]) -> None:
+    def _store_run_outcome(
+        self,
+        ctx: Context,
+        behavior: str,
+        reward: Dict[str, float],
+        checks: Dict[str, float],
+        output: Dict[str, Any],
+        ok: bool,
+    ) -> None:
         if not isinstance(ctx, dict):
             return
 
         reward_dict = ensure_reward_dict(reward)
+        extra_factors = compute_reward_factors(behavior, ctx, output)
+        if extra_factors:
+            merge_rewards(reward_dict, extra_factors.items())
+        if not ok:
+            reward_dict["overall"] = 0.0
 
         router_state = ctx.setdefault("router", {})
         recent = None
         entry = {
             "reward": reward_dict,
             "checks": checks,
+            "ok": ok,
             "_behavior": behavior,
         }
         if isinstance(router_state, dict):

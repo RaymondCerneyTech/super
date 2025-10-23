@@ -1,0 +1,32 @@
+name: social_post_optimize
+description: Optimize copy and hashtags for social media platforms.
+inputs: [text]
+outputs: [optimized_text, hashtags]
+args:
+  platform:
+    type: str
+    default: twitter
+    enum: [twitter, linkedin, instagram]
+  topic:
+    type: str
+    default: business
+  max_length:
+    type: int
+    default: 280
+keywords:
+  - social
+  - marketing
+  - post
+  - hashtag
+success_checks:
+  - type: length_leq
+    target: optimized_text
+    arg: max_length
+    weight: 0.4
+    reward_key: brevity
+  - type: similarity_cosine
+    source: text
+    target: optimized_text
+    threshold: 0.3
+    weight: 0.3
+    reward_key: relevance

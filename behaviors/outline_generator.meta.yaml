@@ -1,0 +1,26 @@
+name: outline_generator
+description: Produce a high-level outline with section headings for a given topic.
+inputs: [topic]
+outputs: [outline]
+args:
+  max_sections:
+    type: int
+    default: 5
+  focus_keywords:
+    type: list
+    default: []
+keywords:
+  - outline
+  - structure
+  - plan
+success_checks:
+  - type: similarity_cosine
+    source: topic
+    target: outline
+    weight: 0.4
+    reward_key: relevance
+  - type: length_leq
+    target: outline
+    arg: 10
+    weight: 0.2
+    reward_key: brevity

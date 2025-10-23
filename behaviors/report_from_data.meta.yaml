@@ -1,0 +1,23 @@
+name: report_from_data
+description: Generate a textual report from tabular data.
+inputs: [table]
+outputs: [report_text]
+args:
+  report_title:
+    type: str
+    default: Data Summary
+keywords:
+  - report
+  - data
+  - summary
+success_checks:
+  - type: length_leq
+    target: report_text
+    arg: 300
+    weight: 0.3
+    reward_key: brevity
+  - type: similarity_cosine
+    source: report_text
+    target: report_text
+    weight: 0.1
+    reward_key: coherence

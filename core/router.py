@@ -61,7 +61,9 @@ class SimpleRouter:
         return primary
 
     def _should_fallback(self, behavior: str, ctx: Context) -> Tuple[bool, Optional[str]]:
-        reward, checks = self._extract_last_result(behavior, ctx)
+        reward, checks, ok_flag = self._extract_last_result(behavior, ctx)
+        if ok_flag is False:
+            return True, "previous failure"
         reward_value = self._aggregate_reward(reward)
         if reward_value is not None and reward_value <= 0.0:
             return True, f"reward={reward_value:.3f}"
@@ -80,9 +82,9 @@ class SimpleRouter:
 
     def _extract_last_result(
         self, behavior: str, ctx: Context
-    ) -> Tuple[Optional[Dict[str, float]], Optional[Dict[str, Any]]]:
+    ) -> Tuple[Optional[Dict[str, float]], Optional[Dict[str, Any]], Optional[bool]]:
         if not isinstance(ctx, dict):
-            return None, None
+            return None, None, None
 
         router_state = ctx.get("router")
         if not isinstance(router_state, dict):
@@ -94,7 +96,8 @@ class SimpleRouter:
             if isinstance(result, dict):
                 reward = ensure_reward_dict(result.get("reward"))
                 checks = result.get("checks") if isinstance(result.get("checks"), dict) else None
-                return reward, checks
+                ok_flag = result.get("ok") if isinstance(result.get("ok"), bool) else None
+                return reward, checks, ok_flag
 
         data = ctx.get("data")
         reward_value: Optional[Dict[str, float]] = None
@@ -110,7 +113,7 @@ class SimpleRouter:
                 if isinstance(candidate, dict):
                     checks_value = candidate
 
-        return reward_value, checks_value
+        return reward_value, checks_value, None
 
     def _log_fallback(self, ctx: Context, fallback_from: str, fallback_to: str, reason: Optional[str]) -> None:
         if not isinstance(ctx, dict):

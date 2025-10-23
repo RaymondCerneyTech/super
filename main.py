@@ -1,234 +1,210 @@
 import argparse
 import json
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+import sys
+from textwrap import dedent
 
-from core.audit import log_run
-from core.features import extract_feature_key
 from core.interpreter import Interpreter
-from core.learn import BanditLearner
-from core.plans import run_plan
+from core.planner import plan_task
 from core.registry import BehaviorRegistry
-from core.router import SimpleRouter
-from core.rewards import aggregate_reward, ensure_reward_dict
-
-BIAS_FILE = Path("adapter_biases.json")
+from core.rewards import ensure_reward_dict
 
 
-def load_adapter_biases(path: Path) -> Dict[str, Dict[str, float]]:
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-    result: Dict[str, Dict[str, float]] = {}
-    if isinstance(data, dict):
-        for feature_key, mapping in data.items():
-            if isinstance(mapping, dict):
-                result[str(feature_key)] = {
-                    str(behavior): float(value)
-                    for behavior, value in mapping.items()
-                }
-    return result
+def build_registry() -> BehaviorRegistry:
+    return BehaviorRegistry().discover().load_meta()
 
 
-def save_adapter_biases(path: Path, biases: Dict[str, Dict[str, float]]) -> None:
-    serializable = {
-        feature_key: {behavior: float(value) for behavior, value in mapping.items()}
-        for feature_key, mapping in biases.items()
-    }
-    path.write_text(json.dumps(serializable, indent=2, sort_keys=True), encoding="utf-8")
+def build_interpreter() -> Interpreter:
+    return Interpreter(build_registry())
 
 
-def _format_reward(value: Any) -> str:
-    if isinstance(value, dict):
-        try:
-            return json.dumps({k: round(float(v), 3) for k, v in value.items()}, sort_keys=True)
-        except (TypeError, ValueError):
-            return json.dumps(value, sort_keys=True)
-    try:
-        return f"{float(value):.3f}"
-    except (TypeError, ValueError):
-        return "0.000"
+def print_reward(result: dict) -> None:
+    reward = ensure_reward_dict(result.get("reward"))
+    print("Reward:")
+    print(json.dumps(reward, indent=2))
 
 
-def build_context(args: argparse.Namespace) -> Dict[str, Any]:
-    ctx: Dict[str, Any] = {
+def command_help(args: argparse.Namespace) -> None:
+    help_text = dedent(
+        """
+        Available commands:
+
+          help
+              Show this overview with command descriptions and examples.
+
+          summarize --text TEXT [--strategy {trim,extractive,abstractive}] [--max-words N] [--max-sentences N]
+              Generate a summary. Example:
+                python main.py summarize --text "Long report text..." --strategy extractive --max-words 60
+
+          format --text TEXT [--style {business,casual}] [--wrap-width N]
+              Normalize spacing, headings, and bullets. Example:
+                python main.py format --text "# heading..." --style business
+
+          optimize --text TEXT [--platform P] [--topic T] [--max-length N]
+              Optimise a social media post and suggest hashtags. Example:
+                python main.py optimize --text "Announcing our launch" --platform twitter --topic marketing
+
+          check --text TEXT --policies "phrase1,phrase2"
+              Scan content for prohibited phrases and redact them. Example:
+                python main.py check --text "Share secret roadmap" --policies "secret roadmap"
+
+          plan --goal "goal description" [--text TEXT] [--execute]
+              Build a behaviour plan for a goal, optionally execute it.
+        """
+    ).strip()
+    print(help_text)
+
+
+def command_summarize(args: argparse.Namespace) -> None:
+    interpreter = build_interpreter()
+    ctx = {
         "text": args.text,
         "data": {
             "text": args.text,
             "max_words": args.max_words,
+            "max_sentences": args.max_sentences,
+            "summary_strategy": args.strategy,
         },
     }
-    if args.dry_run:
-        ctx["dry_run"] = True
-    return ctx
+    result = interpreter.execute("summarize", ctx)
+    summary = ctx["data"].get("summary", "")
+    print("Summary:\n" + summary)
+    print_reward(result)
 
 
-def report_result(
-    chosen: str,
-    result: Dict[str, Any],
-    ctx: Dict[str, Any],
-    initial_data: Dict[str, Any],
-    iteration: Optional[int] = None,
-) -> None:
-    if iteration is not None:
-        print(f"\nIteration {iteration}")
-
-    print(f"Behavior: {chosen}")
-    print(f"Reward: {_format_reward(result.get('reward'))}")
-
-    checks = result.get("checks") or {}
-    if checks:
-        print("Checks:")
-        for name, score in checks.items():
-            print(f"  {name}: {score:.3f}")
-
-    outputs = {
-        key: value
-        for key, value in ctx["data"].items()
-        if initial_data.get(key) != value or key not in initial_data
+def command_format(args: argparse.Namespace) -> None:
+    interpreter = build_interpreter()
+    ctx = {
+        "text": args.text,
+        "data": {
+            "text": args.text,
+            "format_style": args.style,
+            "wrap_width": args.wrap_width,
+        },
     }
-    if outputs:
-        print("Outputs:")
-        print(json.dumps(outputs, indent=2))
+    result = interpreter.execute("document_formatting", ctx)
+    formatted = ctx["data"].get("formatted_text", "")
+    print("Formatted Document:\n" + formatted)
+    print_reward(result)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Super AI behaviors via CLI.")
-    parser.add_argument("--text", required=True, help="Input text to process.")
-    parser.add_argument(
-        "--max_words",
-        type=int,
-        default=120,
-        help="Maximum words allowed in the summary.",
+def command_optimize(args: argparse.Namespace) -> None:
+    interpreter = build_interpreter()
+    ctx = {
+        "text": args.text,
+        "data": {
+            "text": args.text,
+            "platform": args.platform,
+            "topic": args.topic,
+            "max_length": args.max_length,
+        },
+    }
+    result = interpreter.execute("social_post_optimize", ctx)
+    print("Optimized Text:\n" + ctx["data"].get("optimized_text", ""))
+    print("Hashtags:", ", ".join(ctx["data"].get("hashtags", [])))
+    print_reward(result)
+
+
+def command_check(args: argparse.Namespace) -> None:
+    interpreter = build_interpreter()
+    policies = [item.strip() for item in args.policies.split(",") if item.strip()]
+    ctx = {
+        "text": args.text,
+        "data": {
+            "text": args.text,
+            "policies": policies,
+            "policy_replacement": args.replacement,
+        },
+    }
+    result = interpreter.execute("policy_check", ctx)
+    print("Sanitized Text:\n" + ctx["data"].get("sanitized_text", ""))
+    print("Violations:")
+    for violation in ctx["data"].get("violations", []):
+        print(f" - {violation['phrase']} -> {violation['context']}")
+    print_reward(result)
+
+
+def command_plan(args: argparse.Namespace) -> None:
+    registry = build_registry()
+    sequence = plan_task(
+        goal=args.goal,
+        registry=registry,
+        learner=None,
+        history=None,
+        max_depth=args.max_depth,
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Flag behaviors to avoid side effects where supported.",
-    )
-    parser.add_argument(
-        "--learn",
-        type=int,
-        default=0,
-        help="Number of learning iterations to perform (0 for single run).",
-    )
-    parser.add_argument(
-        "--plan",
-        type=str,
-        default="",
-        help="Execute the behaviors defined in a YAML plan file.",
-    )
-    args = parser.parse_args()
-
-    if args.plan and args.learn:
-        parser.error("--plan cannot be combined with --learn.")
-
-    registry = BehaviorRegistry().discover().load_meta()
-    interpreter = Interpreter(registry)
-    router = SimpleRouter(registry)
-
-    initial_biases = load_adapter_biases(BIAS_FILE)
-    learner = BanditLearner()
-    for feature_key, mapping in initial_biases.items():
-        learner.values[feature_key] = dict(mapping)
-
-    if args.plan:
-        ctx = build_context(args)
-        plan_result = run_plan(args.plan, ctx, registry, interpreter)
-        step_summaries = [
-            {
-                "behavior": entry["behavior"],
-                "ok": bool(entry["result"].get("ok")),
-                "reward": float(entry["result"].get("reward") or 0.0),
-            }
-            for entry in plan_result["steps"]
-        ]
-        log_run(
-            {
-                "mode": "plan",
-                "plan": args.plan,
-                "total_reward": plan_result["total_reward"],
-                "steps": step_summaries,
-                "biases": initial_biases,
-            }
-        )
-        save_adapter_biases(BIAS_FILE, initial_biases)
+    if not sequence:
+        print("No plan could be generated for that goal.")
+        return
+    print("Plan:", " -> ".join(sequence))
+    if not args.execute:
         return
 
-    ctx = build_context(args)
-    ctx.setdefault("router", {})
-    persisted_biases: Dict[str, Dict[str, float]] = {
-        feature_key: dict(mapping) for feature_key, mapping in initial_biases.items()
-    }
+    if not args.text:
+        print("Execution requires --text to seed the context.", file=sys.stderr)
+        sys.exit(1)
 
-    iterations = args.learn if args.learn > 0 else 1
-    iteration_records: List[Dict[str, Any]] = []
+    interpreter = Interpreter(registry)
+    ctx = {"text": args.text, "data": {"text": args.text}}
+    for behavior in sequence:
+        print(f"\nRunning {behavior}...")
+        result = interpreter.execute(behavior, ctx)
+        print_reward(result)
+    print("\nFinal context data:")
+    print(json.dumps(ctx["data"], indent=2))
 
-    for idx in range(iterations):
-        iteration = idx + 1 if args.learn > 0 else None
-        base_data = ctx.setdefault("data", {})
-        base_data["text"] = args.text
-        base_data["max_words"] = args.max_words
-        ctx["text"] = args.text
 
-        feature_key = extract_feature_key(ctx)
-        router.adapters = dict(
-            persisted_biases.get(feature_key, persisted_biases.get("default", {}))
-        )
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Modular behavior CLI")
+    subparsers = parser.add_subparsers(dest="command")
 
-        initial_data = dict(ctx["data"])
-        chosen = router.choose(ctx)
-        result = interpreter.execute(chosen, ctx)
-        reward_dict = ensure_reward_dict(result.get("reward"))
-        result["reward"] = reward_dict
+    help_parser = subparsers.add_parser("help", help="Show command overview")
+    help_parser.set_defaults(func=command_help)
 
-        report_result(chosen, result, ctx, initial_data, iteration)
+    summarize_parser = subparsers.add_parser("summarize", help="Generate a summary")
+    summarize_parser.add_argument("--text", required=True, help="Text to summarize")
+    summarize_parser.add_argument("--strategy", choices=["trim", "extractive", "abstractive"], default="extractive")
+    summarize_parser.add_argument("--max-words", type=int, default=120)
+    summarize_parser.add_argument("--max-sentences", type=int, default=5)
+    summarize_parser.set_defaults(func=command_summarize)
 
-        learner.update(chosen, reward_dict, feature_key)
-        new_biases = learner.adapter_biases(feature_key)
-        if new_biases:
-            persisted_biases[feature_key] = new_biases
-        elif feature_key in persisted_biases:
-            persisted_biases.pop(feature_key)
-        router.adapters = dict(new_biases)
+    format_parser = subparsers.add_parser("format", help="Format a document")
+    format_parser.add_argument("--text", required=True, help="Document text")
+    format_parser.add_argument("--style", choices=["business", "casual"], default="business")
+    format_parser.add_argument("--wrap-width", type=int, default=80)
+    format_parser.set_defaults(func=command_format)
 
-        iteration_records.append(
-            {
-                "iteration": iteration or 1,
-                "feature_key": feature_key,
-                "behavior": chosen,
-                "ok": bool(result.get("ok")),
-                "reward": reward_dict,
-            }
-        )
-        ctx.setdefault("plan_history", []).append(
-            {
-                "plan": "learn_loop" if args.learn > 0 else "single_run",
-                "step": iteration or 1,
-                "behavior": chosen,
-                "reward": reward_dict,
-                "checks": result.get("checks") or {},
-                "ok": bool(result.get("ok")),
-            }
-        )
+    optimize_parser = subparsers.add_parser("optimize", help="Optimize a social media post")
+    optimize_parser.add_argument("--text", required=True)
+    optimize_parser.add_argument("--platform", choices=["twitter", "linkedin", "instagram"], default="twitter")
+    optimize_parser.add_argument("--topic", default="business")
+    optimize_parser.add_argument("--max-length", type=int, default=280)
+    optimize_parser.set_defaults(func=command_optimize)
 
-    if args.learn > 0:
-        print("\nFinal adapter biases:")
-        print(json.dumps(persisted_biases, indent=2))
+    check_parser = subparsers.add_parser("check", help="Perform policy compliance checks")
+    check_parser.add_argument("--text", required=True)
+    check_parser.add_argument("--policies", required=True, help="Comma separated list")
+    check_parser.add_argument("--replacement", default="[REDACTED]")
+    check_parser.set_defaults(func=command_check)
 
-    log_run(
-        {
-            "mode": "learn" if args.learn > 0 else "single",
-            "iterations": iteration_records,
-            "biases": persisted_biases,
-        }
-    )
-    save_adapter_biases(BIAS_FILE, persisted_biases)
+    plan_parser = subparsers.add_parser("plan", help="Generate a behavior plan")
+    plan_parser.add_argument("--goal", required=True)
+    plan_parser.add_argument("--max-depth", type=int, default=3)
+    plan_parser.add_argument("--text", help="Optional text seed for execution")
+    plan_parser.add_argument("--execute", action="store_true")
+    plan_parser.set_defaults(func=command_plan)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not getattr(args, "command", None):
+        command_help(args)
+        return 0
+    args.func(args)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

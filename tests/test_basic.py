@@ -48,7 +48,7 @@ def test_reward_aggregates_checks(interpreter: Interpreter) -> None:
     result = interpreter.execute("summarize", ctx)
 
     reward = ensure_reward_dict(result["reward"])
-    assert reward["length_leq"] == 1.0
+    assert reward["brevity"] == 1.0
     assert "length_leq" in result["checks"]
     assert result["checks"]["length_leq"] == 1.0
 
@@ -104,6 +104,19 @@ def test_bandit_bias_moves_toward_success() -> None:
 
     biases = learner.adapter_biases("default")
     assert biases["summarize"] >= 0
+
+
+def test_bandit_learner_tracks_reward_factors() -> None:
+    learner = BanditLearner(alpha=0.5)
+    reward = {"overall": 0.6, "fluency": 0.8, "creativity": 0.4, "relevance": 0.7}
+    learner.update("summarize", reward, "default")
+
+    expected_overall = (0.8 + 0.4 + 0.7) / 3
+    assert learner.values["default"]["summarize"] == pytest.approx(expected_overall)
+    factors = learner.factor_values["default"]["summarize"]
+    assert factors["fluency"] == pytest.approx(0.8)
+    assert factors["creativity"] == pytest.approx(0.4)
+    assert factors["relevance"] == pytest.approx(0.7)
 
 
 def test_rewrite_style_invalid_tone(interpreter: Interpreter) -> None:
@@ -249,6 +262,8 @@ def test_grammar_correction_behavior(interpreter: Interpreter) -> None:
     assert "I hope" in corrected
     reward = ensure_reward_dict(result["reward"])
     assert "relevance" in reward
+    assert "fluency" in reward
+    assert reward.get("creativity", 0.0) <= 0.05
 
 
 def test_grammar_correction_aggressive_mode(interpreter: Interpreter) -> None:
@@ -278,6 +293,8 @@ def test_sentiment_analysis_behavior(interpreter: Interpreter) -> None:
     assert ctx["data"]["analysis_text"]
     reward = ensure_reward_dict(result["reward"])
     assert "overall" in reward
+    assert reward.get("fluency", 0.0) >= 0.0
+    assert reward.get("relevance", 0.0) >= 0.0
 
 
 def test_sentiment_analysis_sarcasm(interpreter: Interpreter) -> None:
@@ -286,6 +303,8 @@ def test_sentiment_analysis_sarcasm(interpreter: Interpreter) -> None:
     assert ctx["data"]["sentiment_category"] == "sarcasm"
     assert ctx["data"]["sentiment"] == "negative"
     assert "sarcasm" in result["logs"][0].lower()
+    reward = ensure_reward_dict(result["reward"])
+    assert reward.get("creativity", 0.0) >= 0.0
 
 
 def test_router_fallback_on_failed_behavior(registry: BehaviorRegistry, interpreter: Interpreter, capsys: pytest.CaptureFixture[str]) -> None:
@@ -344,7 +363,7 @@ def test_empty_input_handled(interpreter: Interpreter, registry: BehaviorRegistr
     chosen = router.choose(ctx)
     captured = capsys.readouterr().out
 
-    assert chosen in {"rewrite_style", "summarize", "grammar_correction"}
+    assert chosen in {"rewrite_style", "summarize", "grammar_correction", "document_formatting"}
     assert "[router] fallback" not in captured
 
 
@@ -380,3 +399,112 @@ def test_delayed_reward_adjustment(interpreter: Interpreter) -> None:
     assert adjusted["tone_keyword_match"] == pytest.approx(0.5)
     backlog = ctx.get("reward_backlog", {})
     assert not backlog.get("tone_keyword_match")
+
+def test_summarize_extractive_strategy(interpreter: Interpreter) -> None:
+    text = """Artificial intelligence (AI) is rapidly transforming industries.\n\nIt enables automation of complex tasks, improves decision-making, and unlocks new opportunities. As businesses adopt AI, ethical considerations and responsible deployment are critical."""
+    ctx: Context = {
+        "data": {
+            "text": text,
+            "max_words": 30,
+            "max_sentences": 2,
+            "summary_strategy": "extractive",
+        }
+    }
+    result = interpreter.execute("summarize", ctx)
+    summary = ctx["data"]["summary"]
+    assert len(summary.split()) <= 30
+    reward = ensure_reward_dict(result["reward"])
+    assert reward.get("relevance", 0.0) >= 0.3
+
+
+def test_summarize_abstractive_strategy(interpreter: Interpreter) -> None:
+    text = "Machine learning models analyze data to detect patterns. These insights help companies forecast trends and adapt quickly."
+    ctx: Context = {
+        "data": {
+            "text": text,
+            "summary_strategy": "abstractive",
+            "max_words": 25,
+            "max_sentences": 3,
+        }
+    }
+    interpreter.execute("summarize", ctx)
+    summary = ctx["data"]["summary"]
+    assert len(summary.split()) <= 25
+    assert summary.lower().startswith("machine")
+
+
+def test_document_formatting_behavior(interpreter: Interpreter) -> None:
+    text = "# heading\n\nThis is   a paragraph with  extra spaces.\n\n- item one\n1. item two"
+    ctx: Context = {
+        "data": {
+            "text": text,
+            "format_style": "business",
+            "wrap_width": 50,
+        }
+    }
+    result = interpreter.execute("document_formatting", ctx)
+    formatted = ctx["data"]["formatted_text"]
+    assert formatted.splitlines()[0] == "HEADING"
+    assert "- item one" in formatted
+    reward = ensure_reward_dict(result["reward"])
+    assert reward.get("preservation", 0.0) >= 0.3
+
+
+def test_social_post_optimize_behavior(interpreter: Interpreter) -> None:
+    text = "Our new product dramatically improves productivity for marketing teams."
+    ctx: Context = {
+        "data": {
+            "text": text,
+            "platform": "twitter",
+            "topic": "marketing",
+            "max_length": 120,
+        }
+    }
+    interpreter.execute("social_post_optimize", ctx)
+    optimized = ctx["data"]["optimized_text"]
+    hashtags = ctx["data"]["hashtags"]
+    assert len(optimized) <= 120
+    assert hashtags
+    assert all(tag.startswith("#") for tag in hashtags)
+
+
+def test_outline_generator_behavior(interpreter: Interpreter) -> None:
+    ctx: Context = {"data": {"topic": "SaaS onboarding strategy for enterprise customers", "max_sections": 3}}
+    interpreter.execute("outline_generator", ctx)
+    outline = ctx["data"]["outline"]
+    assert len(outline) == 3
+    assert all(isinstance(section, str) for section in outline)
+
+
+def test_report_from_data_behavior(interpreter: Interpreter) -> None:
+    table = [
+        {"team": "Sales", "leads": "10", "revenue": "15000"},
+        {"team": "Marketing", "leads": "25", "revenue": "9000"},
+        {"team": "Sales", "leads": "12", "revenue": "17000"},
+    ]
+    ctx: Context = {"data": {"table": table, "report_title": "Quarterly Performance"}}
+    interpreter.execute("report_from_data", ctx)
+    report = ctx["data"]["report_text"]
+    assert "Quarterly Performance" in report
+    assert "Total records" in report
+
+
+def test_policy_check_behavior(interpreter: Interpreter) -> None:
+    ctx: Context = {
+        "data": {
+            "text": "Launch the product beta and share the secret roadmap.",
+            "policies": ["secret roadmap"],
+        }
+    }
+    interpreter.execute("policy_check", ctx)
+    violations = ctx["data"]["violations"]
+    sanitized = ctx["data"]["sanitized_text"]
+    assert violations
+    assert "[REDACTED]" in sanitized
+
+
+def test_router_prefers_policy_check(registry: BehaviorRegistry) -> None:
+    router = SimpleRouter(registry)
+    text = "Please check this announcement for compliance and remove prohibited terms."
+    ctx = {"text": text, "data": {"text": text, "policies": ["prohibited terms"]}}
+    assert router.choose(ctx) == "policy_check"
