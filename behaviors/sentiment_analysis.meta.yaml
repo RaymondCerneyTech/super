@@ -1,30 +1,31 @@
 name: sentiment_analysis
-description: Classify sentiment polarity with a confidence score.
+description: Detect sentiment polarity, fine-grained emotion, and intensity.
 inputs: [text]
-outputs: [sentiment, sentiment_score]
+outputs: [sentiment, sentiment_score, sentiment_category, sentiment_intensity, analysis_text]
 keywords:
   - sentiment
   - emotion
   - positive
   - negative
+  - sarcasm
 success_checks:
   - type: similarity_cosine
     source: text
-    target: sentiment
-    weight: 0.2
+    target: analysis_text
+    weight: 0.4
+    reward_key: relevance
+  - type: length_leq
+    target: analysis_text
+    arg: max_words
+    weight: 0.3
     reward_key: coherence
   - type: length_leq
     target: sentiment
-    arg: max_words
-    weight: 0.2
-    reward_key: length
-  - type: tone_keyword_match
-    target: sentiment
-    arg: tone
-    weight: 0.2
-    reward_key: tone_alignment
+    arg: 3
+    weight: 0.15
+    reward_key: label_simplicity
   - type: length_leq
-    target: sentiment_score
-    arg: 5
-    weight: 0.1
-    reward_key: score_bound
+    target: sentiment_category
+    arg: 3
+    weight: 0.15
+    reward_key: category_focus

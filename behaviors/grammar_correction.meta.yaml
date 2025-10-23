@@ -1,24 +1,30 @@
 name: grammar_correction
-description: Improve grammatical correctness of text.
+description: Improve grammatical correctness and style of text.
 inputs: [text]
 outputs: [corrected_text]
+args:
+  grammar_mode:
+    type: str
+    default: standard
+    enum: [standard, aggressive]
 keywords:
   - grammar
   - correct
   - proofread
+  - style
 success_checks:
   - type: similarity_cosine
     source: text
     target: corrected_text
-    weight: 0.4
-    reward_key: coherence
+    weight: 0.5
+    reward_key: relevance
   - type: length_leq
     target: corrected_text
     arg: max_words
-    weight: 0.3
-    reward_key: length
-  - type: tone_keyword_match
+    weight: 0.25
+    reward_key: brevity
+  - type: length_leq
     target: corrected_text
-    arg: tone
-    weight: 0.3
-    reward_key: tone_accuracy
+    arg: 200
+    weight: 0.25
+    reward_key: fluency

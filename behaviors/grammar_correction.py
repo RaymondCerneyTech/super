@@ -14,11 +14,20 @@ class GrammarCorrection(Behavior):
     def run(self, ctx: Context) -> Result:
         data = ctx.setdefault("data", {})
         text = (data.get("text") or ctx.get("text") or "").strip()
-        corrected = self._correct_text(text)
+        mode = (data.get("grammar_mode") or ctx.get("grammar_mode") or "standard").lower()
+        aggressive = mode in {"aggressive", "deep"}
+
+        corrected = self._correct_text(text, aggressive=aggressive)
         data["corrected_text"] = corrected
 
-        edits_made = corrected != text
-        logs = ["Grammar correction applied." if edits_made else "No grammar issues detected."]
+        logs = []
+        if corrected != text:
+            logs.append("Grammar issues corrected.")
+        else:
+            logs.append("No grammar changes were necessary.")
+        if aggressive:
+            logs.append("Aggressive grammar refinement enabled.")
+
         return {
             "ok": True,
             "output": {"corrected_text": corrected},
@@ -27,18 +36,50 @@ class GrammarCorrection(Behavior):
             "reward": 0.0,
         }
 
-    def _correct_text(self, text: str) -> str:
+    def _correct_text(self, text: str, aggressive: bool = False) -> str:
         if not text:
             return ""
 
-        def repl(match: re.Match[str]) -> str:
-            return match.group(0)[0].upper() + match.group(0)[1:]
+        sentences = [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", text) if sentence.strip()]
+        corrected_sentences = []
+        for sentence in sentences:
+            sentence = self._basic_normalization(sentence)
+            if aggressive:
+                sentence = self._style_polish(sentence)
+            corrected_sentences.append(sentence)
 
-        sentences = re.split(r"(?<=[.!?])\s+", text)
-        normalized = " ".join(repl(re.match(r".+", sentence.strip())) if sentence else "" for sentence in sentences)
-        normalized = re.sub(r"\bi\b", "I", normalized)
-        normalized = re.sub(r"\s+", " ", normalized).strip()
-        return normalized
+        corrected = " ".join(corrected_sentences)
+        if aggressive:
+            corrected = self._ensure_terminal_punctuation(corrected)
+        return corrected
+
+    def _basic_normalization(self, sentence: str) -> str:
+        sentence = re.sub(r"\bi\b", "I", sentence)
+        sentence = re.sub(r"\bi'm\b", "I'm", sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r"\s+", " ", sentence)
+        if sentence and sentence[0].islower():
+            sentence = sentence[0].upper() + sentence[1:]
+        return sentence
+
+    def _style_polish(self, sentence: str) -> str:
+        sentence = re.sub(r"\b(can not)\b", "cannot", sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r"\b(won't)\b", "will not", sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r"\b(don't)\b", "do not", sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r"\b(gonna)\b", "going to", sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r"\b(wanna)\b", "want to", sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r"\b(kinda)\b", "kind of", sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r"([!?]){2,}", r"\1", sentence)
+        sentence = re.sub(r"\s*,\s*,", ",", sentence)
+        sentence = re.sub(r"\s*([,.!?;:])", r"\1", sentence)
+        sentence = re.sub(r"([,.!?;:])([^\s])", r"\1 \2", sentence)
+        return sentence.strip()
+
+    def _ensure_terminal_punctuation(self, text: str) -> str:
+        if not text:
+            return ""
+        if text[-1] not in ".!?":
+            return text + "."
+        return text
 
 
 __all__ = ["GrammarCorrection"]

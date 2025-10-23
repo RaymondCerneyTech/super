@@ -56,7 +56,7 @@ def test_reward_aggregates_checks(interpreter: Interpreter) -> None:
 def test_router_prefers_summarize_for_long_text(registry: BehaviorRegistry) -> None:
     router = SimpleRouter(registry)
     long_text = " ".join(["This summary aims to condense important points."] * 10)
-    ctx = {"text": long_text, "data": {"text": long_text}}
+    ctx = {"text": long_text, "data": {"text": long_text, "max_words": 60}}
 
     choice = router.choose(ctx)
     assert choice == "summarize"
@@ -65,7 +65,7 @@ def test_router_prefers_summarize_for_long_text(registry: BehaviorRegistry) -> N
 def test_router_prefers_rewrite_style_for_professional_tone(registry: BehaviorRegistry) -> None:
     router = SimpleRouter(registry)
     text = "Please rewrite this message in a professional tone with a polished style."
-    ctx = {"text": text, "data": {"text": text}}
+    ctx = {"text": text, "data": {"text": text, "max_words": 80}}
 
     choice = router.choose(ctx)
     assert choice == "rewrite_style"
@@ -73,10 +73,28 @@ def test_router_prefers_rewrite_style_for_professional_tone(registry: BehaviorRe
 
 def test_router_picks_rewrite_style_for_professional_tone(registry: BehaviorRegistry) -> None:
     router = SimpleRouter(registry)
-    ctx = {"data": {"text": "Please rewrite this memo in a professional tone"}}
+    ctx = {"data": {"text": "Please rewrite this memo in a professional tone", "max_words": 80}}
 
     choice = router.choose(ctx)
     assert choice == "rewrite_style"
+
+
+def test_router_prefers_grammar_correction(registry: BehaviorRegistry) -> None:
+    router = SimpleRouter(registry)
+    text = "Please correct the grammar and clean up the prose in this paragraph."
+    ctx = {"text": text, "data": {"text": text, "max_words": 80, "grammar_mode": "aggressive"}}
+
+    choice = router.choose(ctx)
+    assert choice == "grammar_correction"
+
+
+def test_router_prefers_sentiment_analysis(registry: BehaviorRegistry) -> None:
+    router = SimpleRouter(registry)
+    text = "Please run sentiment analysis and tell me if customers feel angry, joyful, or sarcastic about our latest update."
+    ctx = {"text": text, "data": {"text": text, "max_words": 80}}
+
+    choice = router.choose(ctx)
+    assert choice == "sentiment_analysis"
 
 
 def test_bandit_bias_moves_toward_success() -> None:
@@ -223,31 +241,56 @@ def test_run_plan_records_history(registry: BehaviorRegistry, interpreter: Inter
 
 
 def test_grammar_correction_behavior(interpreter: Interpreter) -> None:
-    ctx: Context = {"data": {"text": "this is a test. i hope it works."}}
+    ctx: Context = {"data": {"text": "this is a test. i hope it works.", "max_words": 60}}
     result = interpreter.execute("grammar_correction", ctx)
 
     corrected = ctx["data"]["corrected_text"]
     assert corrected.startswith("This")
     assert "I hope" in corrected
     reward = ensure_reward_dict(result["reward"])
-    assert "coherence" in reward
+    assert "relevance" in reward
+
+
+def test_grammar_correction_aggressive_mode(interpreter: Interpreter) -> None:
+    ctx: Context = {
+        "data": {
+            "text": "gonna go now, see ya later!! this needs cleanup",
+            "max_words": 60,
+            "grammar_mode": "aggressive",
+        }
+    }
+    result = interpreter.execute("grammar_correction", ctx)
+    corrected = ctx["data"]["corrected_text"]
+    assert "going to go now" in corrected.lower()
+    assert corrected.endswith(".")
+    assert "Aggressive grammar refinement enabled." in result["logs"]
 
 
 def test_sentiment_analysis_behavior(interpreter: Interpreter) -> None:
-    ctx: Context = {"data": {"text": "I love this product, it is amazing!"}}
+    ctx: Context = {"data": {"text": "I love this product, it is amazing!", "max_words": 80}}
     result = interpreter.execute("sentiment_analysis", ctx)
 
     sentiment = ctx["data"]["sentiment"]
     score = ctx["data"]["sentiment_score"]
     assert sentiment == "positive"
     assert 0.5 <= score <= 1.0
+    assert ctx["data"]["sentiment_category"] == "joy"
+    assert ctx["data"]["analysis_text"]
     reward = ensure_reward_dict(result["reward"])
     assert "overall" in reward
 
 
+def test_sentiment_analysis_sarcasm(interpreter: Interpreter) -> None:
+    ctx: Context = {"data": {"text": "Great, another delay in the release, yeah right.", "max_words": 80}}
+    result = interpreter.execute("sentiment_analysis", ctx)
+    assert ctx["data"]["sentiment_category"] == "sarcasm"
+    assert ctx["data"]["sentiment"] == "negative"
+    assert "sarcasm" in result["logs"][0].lower()
+
+
 def test_router_fallback_on_failed_behavior(registry: BehaviorRegistry, interpreter: Interpreter, capsys: pytest.CaptureFixture[str]) -> None:
     text = "This tone is impossible for the model to understand"
-    ctx: Context = {"text": text, "data": {"text": text}}
+    ctx: Context = {"text": text, "data": {"text": text, "max_words": 80}}
 
     result = interpreter.execute("rewrite_style", ctx)
     assert ensure_reward_dict(result["reward"])["overall"] == 0.0
@@ -264,7 +307,7 @@ def test_router_fallback_on_failed_behavior(registry: BehaviorRegistry, interpre
 
 def test_rewrite_style_success_reward(interpreter: Interpreter) -> None:
     text = "Please rewrite this memo in a professional tone for stakeholders."
-    ctx: Context = {"text": text, "data": {"text": text}}
+    ctx: Context = {"text": text, "data": {"text": text, "max_words": 80}}
 
     result = interpreter.execute("rewrite_style", ctx)
 
@@ -278,7 +321,7 @@ def test_rewrite_style_success_reward(interpreter: Interpreter) -> None:
 
 def test_failed_behavior_updates_context(interpreter: Interpreter) -> None:
     text = "This tone is impossible for the model to process"
-    ctx: Context = {"text": text, "data": {"text": text}}
+    ctx: Context = {"text": text, "data": {"text": text, "max_words": 80}}
 
     result = interpreter.execute("rewrite_style", ctx)
 
@@ -293,7 +336,7 @@ def test_failed_behavior_updates_context(interpreter: Interpreter) -> None:
 
 
 def test_empty_input_handled(interpreter: Interpreter, registry: BehaviorRegistry, capsys: pytest.CaptureFixture[str]) -> None:
-    ctx: Context = {"text": "", "data": {"text": ""}}
+    ctx: Context = {"text": "", "data": {"text": "", "max_words": 40}}
 
     result = interpreter.execute("rewrite_style", ctx)
     assert result["ok"] is True
