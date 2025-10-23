@@ -1,5 +1,5 @@
 # core/interpreter.py
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.checks import CHECKS
 from core.interfaces import Context, Result
@@ -23,6 +23,16 @@ class Interpreter:
                     "reward": 0.0,
                 }
 
+        meta = self._get_meta(name)
+        validation_errors = self._validate_args(meta, ctx)
+        if validation_errors:
+            return {
+                "ok": False,
+                "logs": validation_errors,
+                "checks": {},
+                "reward": 0.0,
+            }
+
         result = behavior.run(ctx)
 
         # write outputs back into ctx.data
@@ -30,7 +40,7 @@ class Interpreter:
         for key, value in output.items():
             data[key] = value
 
-        checks, reward = self._evaluate_checks(name, ctx)
+        checks, reward = self._evaluate_checks(name, ctx, meta)
 
         final_result: Result = dict(result)
         final_result["checks"] = checks
@@ -38,11 +48,14 @@ class Interpreter:
         final_result["output"] = output
         return final_result
 
-    def _evaluate_checks(self, name: str, ctx: Context) -> Tuple[Dict[str, float], float]:
-        try:
-            meta = self.registry.meta(name)
-        except KeyError:
-            return {}, 0.0
+    def _evaluate_checks(
+        self, name: str, ctx: Context, meta: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Dict[str, float], float]:
+        if meta is None:
+            try:
+                meta = self.registry.meta(name)
+            except KeyError:
+                return {}, 0.0
 
         success_checks = meta.get("success_checks") or []
         if not isinstance(success_checks, list):
@@ -79,6 +92,111 @@ class Interpreter:
             reward += weight * score
 
         return scores, reward
+
+    def _get_meta(self, name: str) -> Dict[str, Any]:
+        try:
+            meta = self.registry.meta(name)
+            if isinstance(meta, dict):
+                return meta
+        except KeyError:
+            pass
+        return {}
+
+    def _validate_args(self, meta: Dict[str, Any], ctx: Context) -> List[str]:
+        args_spec = meta.get("args") or {}
+        if not isinstance(args_spec, dict):
+            return []
+
+        errors: List[str] = []
+        data = ctx.setdefault("data", {})
+
+        for arg_name, spec in args_spec.items():
+            if not isinstance(spec, dict):
+                continue
+
+            value_present = False
+            if arg_name in data:
+                value = data[arg_name]
+                value_present = True
+            elif arg_name in ctx:
+                value = ctx[arg_name]
+                data[arg_name] = value
+                value_present = True
+            elif "default" in spec:
+                value = spec["default"]
+                data[arg_name] = value
+                value_present = True
+            else:
+                value = None
+
+            if not value_present:
+                if spec.get("required"):
+                    errors.append(f"Missing required argument: {arg_name}")
+                continue
+
+            value = data.get(arg_name)
+            coerced, type_error = self._coerce_type(arg_name, value, spec.get("type"))
+            if type_error:
+                errors.append(type_error)
+                continue
+
+            canonical, enum_error = self._validate_enum(arg_name, coerced, spec.get("enum"))
+            if enum_error:
+                errors.append(enum_error)
+                continue
+
+            data[arg_name] = canonical
+            if arg_name in ctx:
+                ctx[arg_name] = canonical
+
+        return errors
+
+    def _coerce_type(self, name: str, value: Any, expected: Optional[str]) -> Tuple[Any, Optional[str]]:
+        if expected is None or value is None:
+            return value, None
+
+        if expected == "str":
+            if not isinstance(value, str):
+                return str(value), None
+            return value, None
+
+        if expected == "int":
+            if isinstance(value, bool) or not isinstance(value, int):
+                return value, f"Invalid type for {name}: expected int."
+            return value, None
+
+        if expected == "float":
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return value, f"Invalid type for {name}: expected float."
+            return float(value), None
+
+        if expected == "bool":
+            if not isinstance(value, bool):
+                return value, f"Invalid type for {name}: expected bool."
+            return value, None
+
+        return value, None
+
+    def _validate_enum(
+        self, name: str, value: Any, enum_values: Optional[List[Any]]
+    ) -> Tuple[Any, Optional[str]]:
+        if not enum_values or value is None:
+            return value, None
+        if not isinstance(enum_values, list):
+            return value, None
+
+        normalized_map: Dict[Any, Any] = {}
+        for option in enum_values:
+            key = option.lower() if isinstance(option, str) else option
+            normalized_map[key] = option
+
+        comparison = value.lower() if isinstance(value, str) else value
+
+        if comparison not in normalized_map:
+            return value, f"Invalid value for {name}: {value}. Expected one of {enum_values}."
+
+        canonical = normalized_map[comparison]
+        return canonical, None
 
     def _build_check_args(self, check_type: str, entry: Dict[str, Any], ctx: Context) -> List[Any]:
         if check_type == "length_leq":

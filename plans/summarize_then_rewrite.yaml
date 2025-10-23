@@ -1,0 +1,11 @@
+name: summarize_then_rewrite
+description: Summarize the text and then rewrite it in a professional tone.
+steps:
+  - behavior: summarize
+    params:
+      data:
+        max_words: 40
+  - behavior: rewrite_style
+    params:
+      data:
+        tone: professional

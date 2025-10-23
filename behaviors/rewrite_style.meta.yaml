@@ -6,6 +6,7 @@ args:
   tone:
     type: str
     default: professional
+    enum: [professional, casual]
 keywords:
   - rewrite
   - style

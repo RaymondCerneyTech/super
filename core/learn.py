@@ -1,38 +1,46 @@
 # core/learn.py
 from __future__ import annotations
 
-import math
 from collections import defaultdict
-from typing import Dict
+from typing import Dict, Optional
+
+FeatureValues = Dict[str, float]
 
 
 class BanditLearner:
-    """Simple running-mean bandit learner that produces small adapter biases."""
+    """Exponential moving-average bandit learner that produces contextual adapter biases."""
 
-    def __init__(self) -> None:
-        self.counts = defaultdict(int)
-        self.values = defaultdict(float)  # running mean reward per behavior
+    def __init__(self, alpha: float = 0.1) -> None:
+        self.alpha = max(0.0, min(1.0, alpha))
+        self.values: Dict[str, FeatureValues] = defaultdict(dict)
 
-    def update(self, chosen: str, reward: float) -> None:
-        """Update the running mean reward for the chosen behavior."""
-        n = self.counts[chosen] = self.counts[chosen] + 1
-        v = self.values[chosen]
-        self.values[chosen] = v + (reward - v) / n
+    def update(
+        self,
+        chosen: str,
+        reward: float,
+        feature_key: str,
+        alpha: Optional[float] = None,
+    ) -> None:
+        """Update the smoothed reward estimate for the chosen behavior and feature bucket."""
+        bucket = self.values.setdefault(feature_key, {})
+        a = self.alpha if alpha is None else max(0.0, min(1.0, alpha))
+        current = bucket.get(chosen, 0.0)
+        bucket[chosen] = (1 - a) * current + a * reward
 
-    def adapter_biases(self) -> Dict[str, float]:
-        """Map running means to adapter biases in [-0.5, +0.5]."""
-        if not self.values:
+    def adapter_biases(self, feature_key: str) -> Dict[str, float]:
+        """Map EMAs within a feature bucket to mean-centered biases clamped to [-0.3, +0.3]."""
+        if feature_key in self.values and self.values[feature_key]:
+            bucket = self.values[feature_key]
+        elif feature_key != "default" and "default" in self.values and self.values["default"]:
+            bucket = self.values["default"]
+        else:
             return {}
 
-        means = self.values
-        mn, mx = min(means.values()), max(means.values())
-
-        if math.isclose(mx, mn):
-            if mx > 0:
-                return {k: 0.5 for k in means}
-            if mx < 0:
-                return {k: -0.5 for k in means}
-            return {k: 0.0 for k in means}
-
-        rng = mx - mn
-        return {k: ((v - mn) / rng) - 0.5 for k, v in means.items()}
+        vals = list(bucket.values())
+        if len(vals) <= 1:
+            mu = 0.0
+        else:
+            mu = sum(vals) / len(vals)
+        tau = 0.5
+        raw = {k: (v - mu) / (tau + 1e-8) for k, v in bucket.items()}
+        return {k: max(-0.3, min(0.3, x)) for k, x in raw.items()}

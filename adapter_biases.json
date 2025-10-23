@@ -1,0 +1,11 @@
+{
+  "compress_hint": {
+    "summarize": 0.3
+  },
+  "long_text": {
+    "rewrite_style": 0.3
+  },
+  "style_hint": {
+    "rewrite_style": 0.3
+  }
+}
