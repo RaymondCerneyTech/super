@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from core.interfaces import Context
 from core.registry import BehaviorRegistry
@@ -43,7 +43,89 @@ class SimpleRouter:
         return {name: exps[name] / total for name in logits}
 
     def choose(self, ctx: Context) -> str:
-        scores = self.decide(ctx)
-        if not scores:
+        ranking = sorted(
+            self.decide(ctx).items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        if not ranking:
             raise ValueError("No behaviors available for routing.")
-        return max(scores.items(), key=lambda item: item[1])[0]
+
+        primary = ranking[0][0]
+        if self._should_fallback(primary, ctx) and len(ranking) > 1:
+            fallback = ranking[1][0]
+            self._log_fallback(ctx, primary, fallback)
+            return fallback
+        return primary
+
+    def _should_fallback(self, behavior: str, ctx: Context) -> bool:
+        reward, checks = self._extract_last_result(behavior, ctx)
+        if reward is not None and reward <= 0.0:
+            return True
+        if checks is not None:
+            return len(checks) == 0
+
+        try:
+            meta = self.registry.meta(behavior)
+        except KeyError:
+            meta = {}
+        success_checks = meta.get("success_checks") or []
+        return not success_checks
+
+    def _extract_last_result(
+        self, behavior: str, ctx: Context
+    ) -> Tuple[Optional[float], Optional[Dict[str, Any]]]:
+        if not isinstance(ctx, dict):
+            return None, None
+
+        router_state = ctx.get("router")
+        if not isinstance(router_state, dict):
+            router_state = {}
+
+        recent_results = router_state.get("recent_results")
+        if isinstance(recent_results, dict):
+            result = recent_results.get(behavior)
+            if isinstance(result, dict):
+                reward = result.get("reward")
+                checks = result.get("checks")
+                reward_value = None
+                if reward is not None:
+                    try:
+                        reward_value = float(reward)
+                    except (TypeError, ValueError):
+                        reward_value = None
+                if isinstance(checks, dict):
+                    return reward_value, checks
+                return reward_value, None
+
+        data = ctx.get("data")
+        reward_value = None
+        checks_value: Optional[Dict[str, Any]] = None
+        if isinstance(data, dict):
+            reward_map = data.get("rewards")
+            if isinstance(reward_map, dict) and behavior in reward_map:
+                try:
+                    reward_value = float(reward_map[behavior])
+                except (TypeError, ValueError):
+                    reward_value = None
+
+            checks_map = data.get("checks")
+            if isinstance(checks_map, dict):
+                candidate = checks_map.get(behavior)
+                if isinstance(candidate, dict):
+                    checks_value = candidate
+
+        return reward_value, checks_value
+
+    def _log_fallback(self, ctx: Context, fallback_from: str, fallback_to: str) -> None:
+        if not isinstance(ctx, dict):
+            return
+
+        audit_log = ctx.setdefault("router_audit", [])
+        if isinstance(audit_log, list):
+            audit_log.append(
+                {
+                    "fallback_from": fallback_from,
+                    "fallback_to": fallback_to,
+                }
+            )
