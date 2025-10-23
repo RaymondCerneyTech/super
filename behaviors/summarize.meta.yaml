@@ -7,6 +7,13 @@ args:
   max_words:
     type: int
     default: 120
+keywords:
+  - summary
+  - summarize
+  - tl;dr
+  - shorten
+  - condense
+  - overview
 success_checks:
   - type: length_leq
     target: summary
