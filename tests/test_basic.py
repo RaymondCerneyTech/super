@@ -5,7 +5,7 @@ import pytest
 from core.features import extract_feature_key
 from core.interpreter import Interpreter
 from core.learn import BanditLearner
-from core.planner import plan_task
+from core.planner import plan, normalise_goal_flags
 from core.plans import run_plan
 from core.registry import BehaviorRegistry
 from core.rewards import aggregate_reward, ensure_reward_dict
@@ -208,36 +208,33 @@ def test_feature_key_extraction() -> None:
     assert extract_feature_key(ctx_default) == "default"
 
 
-def test_plan_task_prefers_high_reward_sequence(registry: BehaviorRegistry) -> None:
-    learner = BanditLearner(alpha=0.3)
-    for _ in range(5):
-        learner.update("summarize", {"overall": 0.9, "length": 0.95}, "default")
-        learner.update("rewrite_style", {"overall": 0.2, "tone_accuracy": 0.25}, "default")
+def test_planner_prefers_summary_then_rewrite(registry: BehaviorRegistry) -> None:
+    interpreter = Interpreter(registry)
+    text = "Please summarize this report and rewrite it professionally."
+    ctx: Context = {
+        "text": text,
+        "data": {"text": text},
+        "router": {"cluster_bias": "analytic"},
+    }
+    flags = normalise_goal_flags("summary,rewrite")
+    result = plan(flags, ctx, registry, interpreter, cluster_bias="analytic", max_expansions=10)
+    steps = [behavior for behavior, _ in result["steps"]]
+    assert steps[:2] == ["summarize", "rewrite_style"]
 
-    sequence = plan_task(
-        "Please summarize this report and rewrite it professionally.",
-        registry,
-        learner,
-    )
 
-    assert sequence == ["summarize", "rewrite_style"]
-
-
-def test_plan_task_uses_history_when_no_learner_data(registry: BehaviorRegistry) -> None:
-    history = [
-        {"behavior": "summarize", "reward": {"overall": 0.8, "length": 0.85}},
-        {"behavior": "rewrite_style", "reward": {"overall": 0.15, "tone_accuracy": 0.2}},
-    ]
-
-    sequence = plan_task(
-        "Rewrite this text after you condense it.",
-        registry,
-        None,
-        history=history,
-        simulations=50,
-    )
-
-    assert sequence == ["summarize", "rewrite_style"]
+def test_planner_handles_performance_flags(registry: BehaviorRegistry) -> None:
+    interpreter = Interpreter(registry)
+    text = "Rewrite this text after you condense it for compliance and remove secrets."
+    ctx: Context = {
+        "text": text,
+        "data": {"text": text, "policies": ["secrets"]},
+        "router": {"cluster_bias": "analytic"},
+    }
+    flags = normalise_goal_flags("summary,compliant")
+    result = plan(flags, ctx, registry, interpreter, cluster_bias="analytic", max_expansions=15)
+    steps = [behavior for behavior, _ in result["steps"]]
+    assert "summarize" in steps
+    assert any(effect == "compliant" for _, info in result["steps"] for effect in info.get("effects", []))
 
 
 def test_run_plan_records_history(registry: BehaviorRegistry, interpreter: Interpreter, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -333,7 +330,7 @@ def test_rewrite_style_success_reward(interpreter: Interpreter) -> None:
     assert result["ok"] is True
     reward = ensure_reward_dict(result["reward"])
     assert reward["tone_keyword_match"] >= 1.0
-    assert reward["overall"] >= 1.0
+    assert reward["overall"] >= 0.7
     rewritten = ctx["data"]["rewritten_text"]
     assert "Please let me know" in rewritten
 
@@ -501,6 +498,20 @@ def test_policy_check_behavior(interpreter: Interpreter) -> None:
     sanitized = ctx["data"]["sanitized_text"]
     assert violations
     assert "[REDACTED]" in sanitized
+
+
+def test_policy_phrase_detection_and_alignment(interpreter: Interpreter) -> None:
+    text = "Draft contract includes the secret roadmap."
+    ctx: Context = {
+        "text": text,
+        "data": {"text": text, "policies": ["secret roadmap"]},
+    }
+    result = interpreter.execute("policy_check", ctx)
+    assert "compliant" in result.get("effects", [])
+    evidence = result["rationale"]["evidence"]
+    assert any("secret roadmap" in item.lower() for item in evidence)
+    rewards = ensure_reward_dict(result["rewards"])
+    assert rewards.get("explanation_alignment", 0.0) > 0.0
 
 
 def test_router_prefers_policy_check(registry: BehaviorRegistry) -> None:

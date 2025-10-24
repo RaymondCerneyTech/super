@@ -15,6 +15,12 @@ keywords:
   - style
   - spacing
   - document
+preconditions:
+  - "text_len > 0"
+effects: [formatted]
+cost: 1.0
+capabilities: [analytic]
+requires_explanation: true
 success_checks:
   - type: length_leq
     target: formatted_text

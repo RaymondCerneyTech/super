@@ -18,16 +18,32 @@ class DocumentFormatting(Behavior):
         wrap_width = int(data.get("wrap_width") or 80)
 
         formatted = self._normalize_spacing(text)
-        formatted = self._normalize_headings(formatted)
-        formatted = self._bulletize_lists(formatted)
+        formatted, heading_fixes = self._normalize_headings(formatted)
+        formatted, bullet_fixes = self._bulletize_lists(formatted)
 
         if style == "business":
-            formatted = self._enforce_business_style(formatted)
+            formatted, tone_fixes = self._enforce_business_style(formatted)
         elif style == "casual":
-            formatted = self._enforce_casual_style(formatted)
+            formatted, tone_fixes = self._enforce_casual_style(formatted)
+        else:
+            tone_fixes = []
 
         formatted = self._wrap_lines(formatted, wrap_width)
         data["formatted_text"] = formatted
+
+        evidence = []
+        if heading_fixes:
+            evidence.append(f"headings: {heading_fixes}")
+        if bullet_fixes:
+            evidence.append(f"lists: {bullet_fixes}")
+        if tone_fixes:
+            evidence.append(f"tone: {tone_fixes}")
+        evidence.append(f"wrap={wrap_width}")
+
+        rationale = {
+            "why": f"Formatted document in {style} style",
+            "evidence": evidence,
+        }
 
         logs = [f"Formatting applied using style='{style}', wrap_width={wrap_width}."]
         return {
@@ -36,6 +52,8 @@ class DocumentFormatting(Behavior):
             "logs": logs,
             "checks": {},
             "reward": 0.0,
+            "rationale": rationale,
+            "effects": ["formatted"],
         }
 
     def _normalize_spacing(self, text: str) -> str:
@@ -45,33 +63,53 @@ class DocumentFormatting(Behavior):
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
-    def _normalize_headings(self, text: str) -> str:
+    def _normalize_headings(self, text: str) -> tuple[str, str]:
+        fixes = []
+
         def repl(match: re.Match[str]) -> str:
             heading = match.group(1).strip()
+            fixes.append(heading)
             return heading.upper()
 
-        return re.sub(r"^#+\s*(.+)$", repl, text, flags=re.MULTILINE)
+        return re.sub(r"^#+\s*(.+)$", repl, text, flags=re.MULTILINE), ", ".join(fixes)
 
-    def _bulletize_lists(self, text: str) -> str:
-        def normalize_line(line: str) -> str:
+    def _bulletize_lists(self, text: str) -> tuple[str, str]:
+        converted = []
+        lines = []
+        for line in text.splitlines():
             stripped = line.strip()
             if re.match(r"[\-*\d]+\.\s", stripped):
-                return "- " + stripped.split(maxsplit=1)[-1]
-            return stripped
+                normalized = "- " + stripped.split(maxsplit=1)[-1]
+                converted.append(normalized)
+                lines.append(normalized)
+            else:
+                lines.append(stripped)
+        return "\n".join(lines), ", ".join(converted)
 
-        lines = [normalize_line(line) for line in text.splitlines()]
-        return "\n".join(lines)
+    def _enforce_business_style(self, text: str) -> tuple[str, list[str]]:
+        fixes = []
+        def replace(pattern: str, repl: str, label: str, source: str) -> str:
+            nonlocal fixes
+            if re.search(pattern, source, flags=re.IGNORECASE):
+                fixes.append(label)
+            return re.sub(pattern, repl, source, flags=re.IGNORECASE)
 
-    def _enforce_business_style(self, text: str) -> str:
-        text = re.sub(r"\bcan't\b", "cannot", text, flags=re.IGNORECASE)
-        text = re.sub(r"\bwon't\b", "will not", text, flags=re.IGNORECASE)
-        text = re.sub(r"\b\s+pls\b", " please", text, flags=re.IGNORECASE)
-        return text
+        text = replace(r"\bcan't\b", "cannot", "cant->cannot", text)
+        text = replace(r"\bwon't\b", "will not", "wont->will not", text)
+        text = replace(r"\bpls\b", "please", "pls->please", text)
+        return text, fixes
 
-    def _enforce_casual_style(self, text: str) -> str:
-        text = re.sub(r"\bdo not\b", "don't", text, flags=re.IGNORECASE)
-        text = re.sub(r"\bwill not\b", "won't", text, flags=re.IGNORECASE)
-        return text
+    def _enforce_casual_style(self, text: str) -> tuple[str, list[str]]:
+        fixes = []
+        def replace(pattern: str, repl: str, label: str, source: str) -> str:
+            nonlocal fixes
+            if re.search(pattern, source, flags=re.IGNORECASE):
+                fixes.append(label)
+            return re.sub(pattern, repl, source, flags=re.IGNORECASE)
+
+        text = replace(r"\bdo not\b", "don't", "do not->don't", text)
+        text = replace(r"\bwill not\b", "won't", "will not->won't", text)
+        return text, fixes
 
     def _wrap_lines(self, text: str, width: int) -> str:
         if width <= 0:
@@ -82,7 +120,7 @@ class DocumentFormatting(Behavior):
             if not words:
                 wrapped_lines.append("")
                 continue
-            current = []
+            current: list[str] = []
             current_length = 0
             for word in words:
                 if current and current_length + len(word) + 1 > width:

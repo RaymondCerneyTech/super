@@ -13,9 +13,16 @@ keywords:
   - tone
   - casual
   - professional
+preconditions:
+  - "text_len > 0"
+effects: [tone_adjusted, creative_tone]
+cost: 1.1
+capabilities: [creative]
+requires_explanation: true
 success_checks:
   - type: tone_keyword_match
     target: rewritten_text
     arg: tone
     weight: 1.0
     threshold: 0.5
+    reward_key: tone_keyword_match

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Tuple
 
 from core.interfaces import Behavior, Context, Result
 
@@ -20,16 +20,13 @@ class Summarize(Behavior):
         max_sentences = int(data.get("max_sentences") or 5)
         strategy = (data.get("summary_strategy") or ctx.get("summary_strategy") or "extractive").lower()
 
-        if not text:
-            summary = ""
-        elif strategy == "extractive":
-            summary = self._extractive_summary(text, max_sentences, max_words)
-        elif strategy == "abstractive":
-            summary = self._abstractive_summary(text, max_sentences, max_words)
-        else:
-            summary = self._trim_summary(text, max_words)
-
+        summary, evidence = self._apply_strategy(text, strategy, max_sentences, max_words)
         data.setdefault("summary", summary)
+
+        rationale = {
+            "why": f"Selected summary using {strategy} strategy",
+            "evidence": evidence,
+        }
 
         logs = [f"Summarization strategy: {strategy}"]
         if len(summary.split()) > max_words:
@@ -37,13 +34,40 @@ class Summarize(Behavior):
             summary = self._trim_summary(summary, max_words)
             data["summary"] = summary
 
+        effects = ["have_summary"]
+        if summary:
+            summary_tokens = summary.split()
+            original_tokens = text.split()
+            if summary_tokens and len(summary_tokens) <= max_words:
+                effects.append("concise")
+            if self._is_exact_match(summary, text, strategy):
+                effects.append("exact")
+
         return {
             "ok": True,
             "output": {"summary": summary},
             "logs": logs,
             "checks": {},
             "reward": 0.0,
+            "rationale": rationale,
+            "effects": effects,
         }
+
+    def _apply_strategy(
+        self,
+        text: str,
+        strategy: str,
+        max_sentences: int,
+        max_words: int,
+    ) -> Tuple[str, List[str]]:
+        if not text:
+            return "", []
+        if strategy == "extractive":
+            return self._extractive_summary(text, max_sentences, max_words)
+        if strategy == "abstractive":
+            return self._abstractive_summary(text, max_sentences, max_words)
+        trimmed = self._trim_summary(text, max_words)
+        return trimmed, [trimmed]
 
     def _trim_summary(self, text: str, max_words: int) -> str:
         if max_words <= 0:
@@ -51,12 +75,13 @@ class Summarize(Behavior):
         words = text.split()
         return " ".join(words[:max_words])
 
-    def _extractive_summary(self, text: str, max_sentences: int, max_words: int) -> str:
+    def _extractive_summary(self, text: str, max_sentences: int, max_words: int) -> Tuple[str, List[str]]:
         sentences = self._split_sentences(text)
         if not sentences:
-            return ""
+            return "", []
         if len(sentences) <= max_sentences:
-            return self._trim_summary(text, max_words)
+            trimmed = self._trim_summary(text, max_words)
+            return trimmed, sentences
 
         word_scores = self._word_importance(sentences)
         scored_sentences = []
@@ -70,19 +95,23 @@ class Summarize(Behavior):
 
         scored_sentences.sort(reverse=True)
         selected = sorted(scored_sentences[:max_sentences], key=lambda item: item[1])
-        summary = " ".join(sentence for _, _, sentence in selected)
-        return self._trim_summary(summary, max_words)
+        chosen_sentences = [sentence for _, _, sentence in selected]
+        summary = " ".join(chosen_sentences)
+        summary = self._trim_summary(summary, max_words)
+        return summary, chosen_sentences
 
-    def _abstractive_summary(self, text: str, max_sentences: int, max_words: int) -> str:
+    def _abstractive_summary(self, text: str, max_sentences: int, max_words: int) -> Tuple[str, List[str]]:
         sentences = self._split_sentences(text)
         if not sentences:
-            return ""
+            return "", []
         first = sentences[0]
         last = sentences[-1] if len(sentences) > 1 else ""
-        mid = self._extractive_summary(text, max_sentences=max(1, max_sentences - 1), max_words=max_words)
-        pieces = [phrase for phrase in [first, mid, last] if phrase]
+        mid_summary, mid_evidence = self._extractive_summary(text, max_sentences=max(1, max_sentences - 1), max_words=max_words)
+        pieces = [phrase for phrase in [first, mid_summary, last] if phrase]
         summary = " ".join(pieces)
-        return self._trim_summary(summary, max_words)
+        summary = self._trim_summary(summary, max_words)
+        evidence = [first] + mid_evidence + ([last] if last else [])
+        return summary, evidence
 
     def _split_sentences(self, text: str) -> List[str]:
         raw_sentences = re.split(r"(?<=[.!?])\s+", text)
@@ -105,6 +134,21 @@ class Summarize(Behavior):
             return {}
         max_freq = max(frequency.values())
         return {word: freq / max_freq for word, freq in frequency.items()}
+
+    def _is_exact_match(self, summary: str, original: str, strategy: str) -> bool:
+        if not summary or not original:
+            return False
+        normalized_summary = re.sub(r"\s+", " ", summary.strip().lower())
+        normalized_original = re.sub(r"\s+", " ", original.strip().lower())
+        if strategy in {"trim", "extractive"} and normalized_summary in normalized_original:
+            return True
+        # fall back to word coverage heuristic
+        summary_tokens = set(self._tokenize(summary))
+        original_tokens = set(self._tokenize(original))
+        if not summary_tokens:
+            return False
+        overlap = len(summary_tokens & original_tokens) / len(summary_tokens)
+        return overlap >= 0.9 and strategy != "abstractive"
 
 
 __all__ = ["Summarize"]

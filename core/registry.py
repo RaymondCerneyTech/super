@@ -13,13 +13,21 @@ from core.interfaces import Behavior
 class BehaviorRegistry:
     """Registry that discovers behavior classes and their metadata."""
 
+    DEFAULT_META = {
+        "preconditions": ["true"],
+        "effects": [],
+        "cost": 1.0,
+        "capabilities": ["analytic"],
+        "requires_explanation": False,
+    }
+
     def __init__(self) -> None:
         self._behaviors: Dict[str, Behavior] = {}
         self._meta: Dict[str, Dict] = {}
         self._package_dir: Optional[Path] = None
 
     def discover(self, package_dir: str = "behaviors") -> "BehaviorRegistry":
-        """Locate behavior modules under ``package_dir`` and instantiate them."""
+        """Locate behavior modules under `package_dir` and instantiate them."""
         base_path = Path(package_dir)
         if not base_path.is_absolute():
             project_root = Path(__file__).resolve().parent.parent
@@ -47,7 +55,7 @@ class BehaviorRegistry:
         return self
 
     def load_meta(self) -> "BehaviorRegistry":
-        """Load ``.meta.yaml`` files that share the behavior basename."""
+        """Load `.meta.yaml` files that share the behavior basename."""
         if self._package_dir is None:
             self.discover()
 
@@ -58,9 +66,11 @@ class BehaviorRegistry:
         for name in self._behaviors:
             meta_path = self._package_dir / f"{name}.meta.yaml"
             if not meta_path.exists():
+                self._meta[name] = dict(self.DEFAULT_META)
                 continue
             with meta_path.open("r", encoding="utf-8") as fh:
-                self._meta[name] = yaml.safe_load(fh) or {}
+                raw = yaml.safe_load(fh) or {}
+            self._meta[name] = self._normalize_meta(raw)
 
         return self
 
@@ -68,10 +78,48 @@ class BehaviorRegistry:
         return self._behaviors[name]
 
     def meta(self, name: str) -> Dict:
-        return self._meta[name]
+        return self._meta.get(name, dict(self.DEFAULT_META))
 
     def list(self) -> List[str]:
         return sorted(self._behaviors.keys())
+
+    def behavior_capabilities(self, name: str) -> List[str]:
+        return list(self.meta(name).get("capabilities", ["analytic"]))
+
+    def behavior_effects(self, name: str) -> List[str]:
+        return list(self.meta(name).get("effects", []))
+
+    def behavior_cost(self, name: str) -> float:
+        return float(self.meta(name).get("cost", 1.0))
+
+    def behavior_preconditions(self, name: str) -> List[str]:
+        return list(self.meta(name).get("preconditions", ["true"]))
+
+    def behavior_requires_explanation(self, name: str) -> bool:
+        return bool(self.meta(name).get("requires_explanation", False))
+
+    def behavior_cluster(self, name: str) -> str:
+        caps = [cap.lower() for cap in self.behavior_capabilities(name)]
+        return "creative" if "creative" in caps else "analytic"
+
+    @staticmethod
+    def _normalize_meta(raw: Dict[str, object]) -> Dict[str, object]:
+        normalized = dict(BehaviorRegistry.DEFAULT_META)
+        normalized.update(raw or {})
+        for key in ("preconditions", "effects", "capabilities"):
+            value = normalized.get(key)
+            if not isinstance(value, list):
+                normalized[key] = [value] if value not in (None, "") else []
+        if not normalized["preconditions"]:
+            normalized["preconditions"] = ["true"]
+        if not normalized["effects"]:
+            normalized["effects"] = []
+        try:
+            normalized["cost"] = float(normalized.get("cost", 1.0))
+        except (TypeError, ValueError):
+            normalized["cost"] = 1.0
+        normalized["requires_explanation"] = bool(normalized.get("requires_explanation", False))
+        return normalized
 
     @staticmethod
     def _import_module_from_path(module_path: Path):

@@ -1,216 +1,202 @@
-
 from __future__ import annotations
 
+import copy
 import heapq
-import re
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from core.learn import BanditLearner
-from core.rewards import aggregate_reward, ensure_reward_dict
+from core.interfaces import Context, evaluate_preconditions
+from core.plan_cache import shared_plan_cache
 from core.registry import BehaviorRegistry
+from core.rewards import ensure_reward_dict
 
-DEFAULT_BEHAVIORS = [
-    "summarize",
-    "rewrite_style",
-    "grammar_correction",
-    "sentiment_analysis",
-    "outline_generator",
-    "report_from_data",
-    "policy_check",
-    "document_formatting",
-    "social_post_optimize",
-]
-DEFAULT_EXPECTED_REWARD = 0.6
-DEFAULT_MAX_DEPTH = 3
-MAX_BRANCHING = 4
+GOAL_ALIASES = {
+    "summary": "have_summary",
+    "summarize": "have_summary",
+    "compliant": "compliant",
+    "formatted": "formatted",
+    "rewrite": "tone_adjusted",
+    "tone": "tone_adjusted",
+    "creative tone": "creative_tone",
+    "creative_tone": "creative_tone",
+    "concise": "concise",
+    "exact": "exact",
+    "cited": "cited",
+    "grounded": "grounded",
+    "verbose": "verbose",
+    "fresh": "fresh",
+}
+
+GOAL_PRIORITY_BONUS = {
+    "have_summary": 0.4,
+    "compliant": 0.45,
+    "formatted": 0.15,
+    "tone_adjusted": 0.35,
+    "creative_tone": 0.4,
+    "concise": 0.3,
+    "exact": 0.35,
+    "cited": 0.35,
+    "grounded": 0.4,
+    "verbose": 0.3,
+    "fresh": 0.3,
+}
+DEFAULT_GOAL_BONUS = 0.25
 
 
-def plan_task(
-    goal: str,
+def normalise_goal_flags(goal: str) -> List[str]:
+    flags: List[str] = []
+    for token in goal.split(","):
+        cleaned = token.strip().lower()
+        if not cleaned:
+            continue
+        flags.append(GOAL_ALIASES.get(cleaned, cleaned))
+    return flags
+
+
+def plan(
+    goal_flags: Iterable[str],
+    ctx: Context,
     registry: BehaviorRegistry,
-    learner: Optional[BanditLearner] = None,
-    history: Optional[Iterable[Dict[str, Any]]] = None,
-    max_depth: int = DEFAULT_MAX_DEPTH,
-    feedback: Optional[Dict[str, Any]] = None,
-    **_: Any,
-) -> List[str]:
-    goal = (goal or "").strip()
-    available = set(registry.list())
-    if not goal or not available:
-        return []
+    interpreter,
+    *,
+    cluster_bias: str = "analytic",
+    max_expansions: int = 20,
+) -> Dict[str, Any]:
+    cache = shared_plan_cache()
+    use_cache = not ctx.get("router", {}).get("no_cache") if isinstance(ctx, dict) else True
+    tags = []
+    data = ctx.get("data") if isinstance(ctx, dict) else {}
+    if isinstance(data, dict):
+        tag_value = data.get("tags")
+        if isinstance(tag_value, (list, tuple, set)):
+            tags = [str(tag) for tag in tag_value]
+        elif isinstance(tag_value, str):
+            tags = [tag.strip() for tag in tag_value.split(",") if tag.strip()]
+    cache_key = cache.build_key(goal_flags, backend=str(data.get("index_backend", "tfidf")), verbosity=str(data.get("verbosity", "normal")), tags=tags)
+    if use_cache:
+        cached_behaviors = cache.lookup(cache_key)
+        if cached_behaviors:
+            return _execute_cached_plan(cached_behaviors, ctx, registry, interpreter, goal_flags)
 
-    subgoals = _parse_subgoals(goal)
-    if len(subgoals) > 1:
-        plan: List[str] = []
-        for sub in subgoals:
-            plan.extend(
-                plan_task(
-                    sub,
-                    registry,
-                    learner=learner,
-                    history=history,
-                    max_depth=max_depth,
-                    feedback=feedback,
-                )
+    goal_set = set(goal_flags)
+    initial_ctx = copy.deepcopy(ctx)
+    initial_flags: Set[str] = set()
+
+    heap: List[Tuple[float, int, Dict[str, Any]]] = []
+    counter = 0
+    state = {
+        "utility": 0.0,
+        "ctx": initial_ctx,
+        "flags": initial_flags,
+        "steps": [],
+    }
+    heapq.heappush(heap, (-0.0, counter, state))
+
+    best = state
+    expansions = 0
+
+    while heap and expansions < max_expansions:
+        _, _, current = heapq.heappop(heap)
+        expansions += 1
+
+        if goal_set and goal_set.issubset(current["flags"]):
+            best = current
+            break
+
+        for behavior in registry.list():
+            meta = registry.meta(behavior)
+            preconds = meta.get("preconditions", ["true"])
+            if not evaluate_preconditions(preconds, current["ctx"], current["flags"]):
+                continue
+
+            new_ctx = copy.deepcopy(current["ctx"])
+            step_result = interpreter.execute(behavior, new_ctx)
+            if not step_result.get("ok", True):
+                continue
+
+            rewards = ensure_reward_dict(step_result.get("rewards"))
+            overall = rewards.get("overall", 0.0)
+            cost = registry.behavior_cost(behavior)
+            capabilities = [cap.lower() for cap in registry.behavior_capabilities(behavior)]
+
+            bias_penalty = 0.0
+            if cluster_bias == "analytic" and "creative" in capabilities:
+                bias_penalty = 0.08
+            elif cluster_bias == "creative":
+                bias_penalty = -0.05 if "creative" in capabilities else 0.04
+
+            new_flags = current["flags"].union(step_result.get("effects", []))
+            if new_flags == current["flags"]:
+                continue
+            gained_flags = (new_flags - current["flags"]) & goal_set
+            progress_bonus = sum(GOAL_PRIORITY_BONUS.get(flag, DEFAULT_GOAL_BONUS) for flag in gained_flags)
+            utility = current["utility"] + overall - 0.05 * cost - bias_penalty + progress_bonus
+
+            new_state = {
+                "utility": utility,
+                "ctx": new_ctx,
+                "flags": new_flags,
+                "steps": current["steps"]
+                + [
+                    (
+                        behavior,
+                        {
+                            "rewards": rewards,
+                            "rationale": step_result.get("rationale", {}),
+                            "effects": step_result.get("effects", []),
+                        },
+                    )
+                ],
+            }
+
+            counter += 1
+            heapq.heappush(heap, (-utility, counter, new_state))
+            if utility > best.get("utility", float("-inf")):
+                best = new_state
+
+    best["goal_satisfied"] = bool(goal_set and goal_set.issubset(best["flags"])) if goal_set else True
+    best["expansions"] = expansions
+    best["remaining_flags"] = list(goal_set - set(best["flags"]))
+    if best.get("goal_satisfied"):
+        cache.store(cache_key, best.get("steps", []))
+    return best
+
+
+def _execute_cached_plan(
+    behaviors: List[str],
+    ctx: Context,
+    registry: BehaviorRegistry,
+    interpreter,
+    goal_flags: Iterable[str],
+) -> Dict[str, Any]:
+    execution_ctx = copy.deepcopy(ctx)
+    steps: List[Tuple[str, Dict[str, Any]]] = []
+    flags: Set[str] = set()
+    for behavior in behaviors:
+        try:
+            result = interpreter.execute(behavior, execution_ctx)
+        except Exception:
+            steps.clear()
+            flags.clear()
+            break
+        steps.append(
+            (
+                behavior,
+                {
+                    "rewards": result.get("rewards", {}),
+                    "rationale": result.get("rationale", {}),
+                    "effects": result.get("effects", []),
+                },
             )
-        return plan
-
-    behavior_stats = _collect_behavior_stats(learner, history)
-    lower_goal = goal.lower()
-    if "summarize" in lower_goal and "rewrite" not in lower_goal:
-        seq = [b for b in ("summarize",) if b in available]
-        if seq:
-            return seq
-    if "summarize" in lower_goal and "rewrite" in lower_goal:
-        sequence = [b for b in ("summarize", "rewrite_style") if b in available]
-        if sequence:
-            return sequence
-
-    if any(word in lower_goal for word in ("condense", "shorten", "compress")) and "rewrite" in lower_goal:
-        sequence = [b for b in ("summarize", "rewrite_style") if b in available]
-        if sequence:
-            return sequence
-
-    avoided = set(feedback.get("avoid", [])) if feedback else set()
-    candidates = _candidate_behaviors(goal, available)
-    return _a_star_plan(goal, candidates, behavior_stats, max_depth, avoided)
-
-
-def _parse_subgoals(goal: str) -> List[str]:
-    lowered = goal.lower()
-    if any(marker in lowered for marker in [" and ", " after ", ";", " then ", " afterwards "]):
-        parts = [part.strip() for part in re.split(r"\band\b|\bafter\b|;|then|afterwards", goal) if part.strip()]
-        if len(parts) > 1:
-            if " after " in lowered:
-                return list(reversed(parts))
-            return parts
-    return [goal]
-
-
-def _candidate_behaviors(goal: str, available: set[str]) -> List[Tuple[str, int]]:
-    goal_lower = goal.lower()
-    ranking: List[Tuple[int, str]] = []
-    keyword_map = [
-        ("grammar_correction", ["grammar", "proofread", "style", "clean"], 3),
-        ("sentiment_analysis", ["sentiment", "feel", "emotion", "angry", "joyful", "sarcasm"], 3),
-        ("summarize", ["summarize", "summary", "tl;dr", "shorten", "condense"], 2),
-        ("rewrite_style", ["rewrite", "tone", "professional", "casual"], 2),
-        ("outline_generator", ["outline", "sections", "plan"], 2),
-        ("report_from_data", ["report", "data", "dashboard", "metrics"], 2),
-        ("policy_check", ["policy", "compliance", "banned", "restricted"], 3),
-        ("document_formatting", ["format", "document", "layout"], 2),
-        ("social_post_optimize", ["social", "post", "hashtag", "twitter", "linkedin", "instagram"], 2),
-    ]
-
-    for behavior, keywords, weight in keyword_map:
-        if behavior not in available:
-            continue
-        score = sum(weight for keyword in keywords if keyword in goal_lower)
-        if score:
-            ranking.append((-score, behavior))
-
-    for behavior in sorted(available):
-        if all(b != behavior for _, b in ranking):
-            ranking.append((-1, behavior))
-
-    ranking.sort()
-    top_score = -ranking[0][0] if ranking else 0
-    selected = [(behavior, -score) for score, behavior in ranking[:MAX_BRANCHING]]
-    if top_score > 1 and selected:
-        return [selected[0]]
-    return selected
-
-
-def _collect_behavior_stats(
-    learner: Optional[BanditLearner],
-    history: Optional[Iterable[Dict[str, Any]]],
-) -> Dict[str, float]:
-    stats: Dict[str, List[float]] = {}
-
-    if learner is not None:
-        for feature_map in learner.values.values():
-            for behavior, mean_reward in feature_map.items():
-                stats.setdefault(behavior, []).append(float(mean_reward))
-
-    if history:
-        for entry in history:
-            behavior = entry.get("behavior")
-            if not behavior:
-                continue
-            reward = ensure_reward_dict(entry.get("reward"))
-            stats.setdefault(behavior, []).append(aggregate_reward(reward))
-
-    aggregated: Dict[str, float] = {}
-    for behavior, values in stats.items():
-        if values:
-            aggregated[behavior] = sum(values) / len(values)
-
-    return aggregated
-
-
-def _expected_reward(behavior: str, stats: Dict[str, float]) -> float:
-    return max(0.0, min(1.0, stats.get(behavior, DEFAULT_EXPECTED_REWARD)))
-
-
-def _heuristic(remaining_depth: int, stats: Dict[str, float]) -> float:
-    if not stats:
-        avg = DEFAULT_EXPECTED_REWARD
-    else:
-        avg = sum(stats.values()) / len(stats)
-    return remaining_depth * (1 - avg)
-
-
-def _a_star_plan(
-    goal: str,
-    candidates: List[Tuple[str, int]],
-    behavior_stats: Dict[str, float],
-    max_depth: int,
-    avoided_behaviors: Iterable[str],
-) -> List[str]:
-    avoided = set(avoided_behaviors)
-    frontier: List[Tuple[float, Tuple[float, List[str], set[str]]]] = []
-    heapq.heappush(frontier, (0.0, (0.0, [], set())))
-    best_sequence: List[str] = []
-    best_score = float("inf")
-
-    while frontier:
-        _, (cost_so_far, path, used) = heapq.heappop(frontier)
-
-        if path and cost_so_far < best_score:
-            best_sequence = path
-            best_score = cost_so_far
-            if len(path) >= max_depth:
-                break
-
-        if len(path) >= max_depth:
-            continue
-
-        ordered = sorted(candidates, key=lambda item: (-_expected_reward(item[0], behavior_stats), -item[1]))
-        for behavior, match_score in ordered:
-            if len(path) >= max_depth:
-                break
-            if path and behavior == path[-1]:
-                continue
-
-            expected = _expected_reward(behavior, behavior_stats)
-            penalty = 1 - expected
-            if behavior in avoided:
-                penalty += 0.3
-            if behavior in used:
-                penalty += 0.1
-            if match_score:
-                penalty -= min(0.25, 0.05 * match_score)
-
-            new_cost = cost_so_far + penalty
-            new_path = path + [behavior]
-            remaining = max_depth - len(new_path)
-            heuristic = _heuristic(remaining, behavior_stats)
-            priority = new_cost + heuristic
-            heapq.heappush(frontier, (priority, (new_cost, new_path, used | {behavior})))
-
-    if not best_sequence and candidates:
-        return [behavior for behavior, _ in candidates[:max_depth]]
-    return best_sequence
-
-
-__all__ = ["plan_task"]
+        )
+        for effect in result.get("effects", []):
+            flags.add(effect)
+    goal_set = set(goal_flags)
+    satisfied = bool(goal_set and goal_set.issubset(flags)) if goal_set else True
+    return {
+        "ctx": execution_ctx,
+        "flags": flags,
+        "steps": steps,
+        "goal_satisfied": satisfied,
+        "expansions": 0,
+        "remaining_flags": list(goal_set - flags),
+    }

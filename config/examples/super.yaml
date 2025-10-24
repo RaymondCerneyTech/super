@@ -1,0 +1,28 @@
+# Example configuration for Super AI CLI
+ingest:
+  index_backend: tfidf
+  tags: knowledge
+  limit: 20
+  lang_any: false
+
+ask:
+  index_backend: tfidf
+  k_passages: 10
+  max_chars: 10000
+  tags: knowledge
+  verbosity: verbose
+  min_words: 900
+  max_words: null
+  fresh_days: 30
+  log_file: logs/ask_runs.jsonl
+  max_expansions: 20
+  explain: false
+  cited: true
+  grounded: true
+  no_bandit: false
+
+plan:
+  log_file: logs/plan_runs.jsonl
+  max_expansions: 18
+  explain: false
+  no_bandit: false

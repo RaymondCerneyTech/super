@@ -1,6 +1,6 @@
 name: policy_check
 description: Scan text for prohibited phrases and optionally redact them.
-inputs: [text, policies]
+inputs: [text]
 outputs: [violations, sanitized_text]
 args:
   policy_replacement:
@@ -11,6 +11,12 @@ keywords:
   - compliance
   - prohibited
   - restricted
+preconditions:
+  - "text_len > 0"
+effects: [compliant]
+cost: 1.2
+capabilities: [analytic]
+requires_explanation: true
 success_checks:
   - type: length_leq
     target: violations

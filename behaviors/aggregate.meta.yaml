@@ -1,0 +1,15 @@
+name: aggregate
+description: Aggregate retrieved passages into a single document.
+inputs: [passages]
+outputs: [aggregated_text]
+args:
+  aggregate_strategy:
+    type: str
+    default: concatenate
+    enum: [concatenate, topic_blocks]
+preconditions:
+  - "'has_passages' in flags"
+effects: [has_aggregate]
+cost: 0.8
+capabilities: [analytic]
+requires_explanation: true
