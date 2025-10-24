@@ -1,0 +1,40 @@
+name: document_formatting
+description: Normalize document structure, spacing, and style conventions.
+inputs: [text]
+outputs: [formatted_text]
+args:
+  format_style:
+    type: str
+    default: business
+    enum: [business, casual]
+  wrap_width:
+    type: int
+    default: 80
+keywords:
+  - format
+  - style
+  - spacing
+  - document
+preconditions:
+  - "text_len > 0"
+effects: [formatted]
+cost: 1.0
+capabilities: [analytic]
+requires_explanation: true
+success_checks:
+  - type: length_leq
+    target: formatted_text
+    arg: wrap_width
+    weight: 0.2
+    reward_key: readability
+  - type: similarity_cosine
+    source: text
+    target: formatted_text
+    threshold: 0.4
+    weight: 0.3
+    reward_key: preservation
+  - type: length_leq
+    target: formatted_text
+    arg: 1000
+    weight: 0.2
+    reward_key: brevity

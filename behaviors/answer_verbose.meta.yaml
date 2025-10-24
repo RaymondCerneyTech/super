@@ -1,0 +1,31 @@
+name: answer_verbose
+description: Generate a verbose, cited answer with structured sections.
+inputs: [question]
+outputs: [answer]
+args:
+  verbosity:
+    type: str
+    default: verbose
+    enum: [short, normal, verbose, max]
+  min_words:
+    type: int
+    default: 800
+  max_words:
+    type: int
+    default: null
+  section_headers:
+    type: bool
+    default: true
+  bullets:
+    type: bool
+    default: true
+  examples:
+    type: bool
+    default: true
+preconditions:
+  - "text_len >= 0"
+  - "'has_passages' in flags or 'has_aggregate' in flags"
+effects: [cited, grounded, verbose]
+cost: 1.5
+capabilities: [analytic, creative]
+requires_explanation: true

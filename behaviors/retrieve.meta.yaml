@@ -1,0 +1,23 @@
+name: retrieve
+description: Retrieve relevant passages from the local index.
+inputs: [question]
+outputs: [passages]
+args:
+  k_passages:
+    type: int
+    default: 12
+  max_chars:
+    type: int
+    default: 12000
+  tags:
+    type: str
+    default: ""
+  index_backend:
+    type: str
+    default: tfidf
+preconditions:
+  - "text_len >= 0"
+effects: [has_passages, fresh]
+cost: 1.2
+capabilities: [analytic]
+requires_explanation: true

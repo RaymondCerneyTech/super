@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+#cache files
+*.pyc
+
 # C extensions
 *.so
 
@@ -158,6 +161,7 @@ dmypy.json
 # pytype static type analyzer
 .pytype/
 
+
 # Cython debug symbols
 cython_debug/
 
@@ -183,3 +187,11 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# data & logs
+data/
+indexes/
+logs/*.jsonl
+
+# sqlite dbs (if you keep them)
+*.sqlitesuper.yaml

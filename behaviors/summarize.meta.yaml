@@ -1,26 +1,43 @@
-# behaviors/summarize.meta.yaml
 name: summarize
-description: Condense input text to <= N words.
+description: Generate a shorter summary of input text with configurable strategies.
 inputs: [text]
 outputs: [summary]
 args:
   max_words:
     type: int
     default: 120
+  max_sentences:
+    type: int
+    default: 5
+  summary_strategy:
+    type: str
+    default: extractive
+    enum: [trim, extractive, abstractive]
 keywords:
-  - summary
   - summarize
-  - tl;dr
-  - shorten
+  - summary
   - condense
-  - overview
+  - tl;dr
+preconditions:
+  - "text_len > 0"
+effects: [have_summary, concise, exact]
+cost: 1.0
+capabilities: [analytic]
+requires_explanation: true
 success_checks:
   - type: length_leq
     target: summary
     arg: max_words
-    weight: 1.0
+    weight: 0.5
+    reward_key: brevity
   - type: similarity_cosine
     source: text
     target: summary
-    threshold: 0.70
-    weight: 0.7
+    threshold: 0.5
+    weight: 0.3
+    reward_key: relevance
+  - type: length_leq
+    target: summary
+    arg: 200
+    weight: 0.2
+    reward_key: fluency

@@ -75,10 +75,8 @@ class DocumentIndex:
             if not doc.tokens:
                 doc.tokens = _tokenize(doc.text)
             now_iso = _now_iso()
-            if not doc.meta.get("fetched_ts"):
-                doc.meta["fetched_ts"] = now_iso
-            if not doc.meta.get("published_ts"):
-                doc.meta["published_ts"] = doc.meta.get("fetched_ts", now_iso)
+            doc.meta.setdefault("fetched_ts", now_iso)
+            doc.meta.setdefault("published_ts", doc.meta.get("fetched_ts", now_iso))
             doc.meta.setdefault("ingested_ts", now_iso)
             doc.meta.setdefault("doc_id", doc.doc_id)
             self.docs.append(doc)
@@ -95,7 +93,12 @@ class DocumentIndex:
             json.dump(payload, handle, ensure_ascii=False)
             handle.write("\n")
 
-    def add_document(self, text: str, meta: Optional[Dict[str, str]] = None, tags: Optional[Iterable[str]] = None) -> Document:
+    def add_document(
+        self,
+        text: str,
+        meta: Optional[Dict[str, str]] = None,
+        tags: Optional[Iterable[str]] = None,
+    ) -> Document:
         meta = dict(meta or {})
         now_iso = _now_iso()
         meta.setdefault("fetched_ts", now_iso)
@@ -198,3 +201,6 @@ def get_index(backend: str = "tfidf", name: str = "default") -> DocumentIndex:
     if key not in _INDEX_CACHE:
         _INDEX_CACHE[key] = DocumentIndex(backend=backend, name=name)
     return _INDEX_CACHE[key]
+
+
+__all__ = ["DocumentIndex", "get_index"]

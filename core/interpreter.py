@@ -3,7 +3,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.checks import CHECKS
 from core.interfaces import Context, Result
+from core.metrics import compute_reward_factors
+from core.rewards import (
+    aggregate_reward,
+    apply_explanation_bonus,
+    compute_explanation_scores,
+    ensure_reward_dict,
+    merge_rewards,
+)
 from core.registry import BehaviorRegistry
+
 
 class Interpreter:
     def __init__(self, registry: BehaviorRegistry):
@@ -13,7 +22,6 @@ class Interpreter:
         behavior = self.registry.get(name)
         data = ctx.setdefault("data", {})
 
-        # preconditions
         for key in behavior.inputs:
             if key not in data and key not in ctx:
                 return {
@@ -21,6 +29,9 @@ class Interpreter:
                     "logs": [f"Missing input: {key}"],
                     "checks": {},
                     "reward": 0.0,
+                    "rewards": {"overall": 0.0},
+                    "rationale": {"why": "precondition failed", "evidence": []},
+                    "effects": [],
                 }
 
         meta = self._get_meta(name)
@@ -31,39 +42,71 @@ class Interpreter:
                 "logs": validation_errors,
                 "checks": {},
                 "reward": 0.0,
+                "rewards": {"overall": 0.0},
+                "rationale": {"why": "argument validation failed", "evidence": validation_errors},
+                "effects": [],
             }
 
-        result = behavior.run(ctx)
+        result = behavior.run(ctx) or {}
 
-        # write outputs back into ctx.data
         output = result.get("output") or {}
         for key, value in output.items():
             data[key] = value
 
-        checks, reward = self._evaluate_checks(name, ctx, meta)
-        self._store_run_outcome(ctx, name, reward, checks)
+        checks, base_reward = self._evaluate_checks(name, ctx, meta)
+        reward_dict = ensure_reward_dict(base_reward)
+        reward_keys = [key for key in reward_dict.keys() if key != "overall"]
+
+        ok = bool(result.get("ok", True))
+
+        if ok:
+            metrics_bonus = compute_reward_factors(name, ctx, output)
+            if metrics_bonus:
+                merge_rewards(reward_dict, metrics_bonus.items())
+            behavior_rewards = result.get("reward") or result.get("rewards")
+            if behavior_rewards:
+                merge_rewards(reward_dict, ensure_reward_dict(behavior_rewards).items())
+        else:
+            reward_dict = {key: 0.0 for key in reward_keys}
+            reward_dict["overall"] = 0.0
+
+        rationale = result.get("rationale") if "rationale" in result else None
+        if not rationale:
+            rationale = self._default_rationale(name, meta)
+        explanation_scores = compute_explanation_scores(rationale, output) if ok else {"explanation_presence": 0.0, "explanation_specificity": 0.0, "explanation_alignment": 0.0}
+        reward_dict = apply_explanation_bonus(reward_dict, explanation_scores) if ok else reward_dict
+
+        effects = result["effects"] if "effects" in result else self.registry.behavior_effects(name)
 
         final_result: Result = dict(result)
         final_result["checks"] = checks
-        final_result["reward"] = reward
         final_result["output"] = output
+        final_result["rationale"] = rationale
+        final_result["effects"] = effects
+        final_result["rewards"] = reward_dict
+        final_result["reward"] = reward_dict
+
+        ok = bool(result.get("ok", True))
+        self._store_run_outcome(ctx, name, reward_dict, checks, output, rationale, effects, ok)
         return final_result
 
     def _evaluate_checks(
         self, name: str, ctx: Context, meta: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Dict[str, float], float]:
+    ) -> Tuple[Dict[str, float], Dict[str, float]]:
         if meta is None:
             try:
                 meta = self.registry.meta(name)
             except KeyError:
-                return {}, 0.0
+                return {}, {"overall": 0.0}
 
         success_checks = meta.get("success_checks") or []
         if not isinstance(success_checks, list):
-            return {}, 0.0
+            return {}, {"overall": 0.0}
 
         scores: Dict[str, float] = {}
-        reward = 0.0
+        reward_components: Dict[str, float] = {}
+        weighted_sum = 0.0
+        weight_total = 0.0
 
         for entry in success_checks:
             if not isinstance(entry, dict):
@@ -90,9 +133,17 @@ class Interpreter:
 
             score = max(0.0, min(1.0, score))
             scores[check_type] = score
-            reward += weight * score
 
-        return scores, reward
+            component_key = str(entry.get("reward_key") or check_type)
+            reward_components[component_key] = score
+            weighted_sum += weight * score
+            weight_total += weight
+
+        reward_components["overall"] = weighted_sum / weight_total if weight_total else (
+            sum(reward_components.values()) / len(reward_components) if reward_components else 0.0
+        )
+
+        return scores, reward_components
 
     def _get_meta(self, name: str) -> Dict[str, Any]:
         try:
@@ -176,6 +227,11 @@ class Interpreter:
                 return value, f"Invalid type for {name}: expected bool."
             return value, None
 
+        if expected == "list":
+            if not isinstance(value, list):
+                return value, f"Invalid type for {name}: expected list."
+            return value, None
+
         return value, None
 
     def _validate_enum(
@@ -234,28 +290,87 @@ class Interpreter:
                 return data[key]
             return ctx.get(key)
 
-        # numeric literal
         return key
 
-    def _store_run_outcome(self, ctx: Context, behavior: str, reward: float, checks: Dict[str, float]) -> None:
+    def _store_run_outcome(
+        self,
+        ctx: Context,
+        behavior: str,
+        reward: Dict[str, float],
+        checks: Dict[str, float],
+        output: Dict[str, Any],
+        rationale: Dict[str, Any],
+        effects: List[str],
+        ok: bool,
+    ) -> None:
         if not isinstance(ctx, dict):
             return
 
+        reward_dict = ensure_reward_dict(reward)
+        if not ok:
+            reward_dict["overall"] = 0.0
+
         router_state = ctx.setdefault("router", {})
+        recent = None
+        entry = {
+            "reward": reward_dict,
+            "rewards": reward_dict,
+            "checks": checks,
+            "ok": ok,
+            "effects": effects,
+            "rationale": rationale,
+            "_behavior": behavior,
+        }
         if isinstance(router_state, dict):
             recent = router_state.setdefault("recent_results", {})
             if isinstance(recent, dict):
-                recent[behavior] = {
-                    "reward": reward,
-                    "checks": checks,
-                }
+                recent[behavior] = entry
 
         data = ctx.setdefault("data", {})
         if isinstance(data, dict):
             rewards_map = data.setdefault("rewards", {})
             if isinstance(rewards_map, dict):
-                rewards_map[behavior] = reward
+                rewards_map[behavior] = reward_dict.copy()
 
             checks_map = data.setdefault("checks", {})
             if isinstance(checks_map, dict):
                 checks_map[behavior] = checks
+
+        backlog = ctx.setdefault("reward_backlog", {})
+        if not isinstance(backlog, dict):
+            return
+
+        if recent is None:
+            recent = router_state.setdefault("recent_results", {})
+
+        for factor, value in reward_dict.items():
+            if factor == "overall":
+                continue
+            if value >= 1.0:
+                pending = backlog.get(factor, [])
+                resolved = []
+                for prev_entry in list(pending):
+                    if not isinstance(prev_entry, dict):
+                        continue
+                    prev_behavior = prev_entry.get("_behavior", behavior)
+                    prev_reward = ensure_reward_dict(prev_entry.get("reward"))
+                    merge_rewards(prev_reward, [(factor, (prev_reward.get(factor, 0.0) + value) / 2)])
+                    prev_entry["reward"] = prev_reward
+                    if isinstance(data, dict):
+                        data.setdefault("rewards", {})[prev_behavior] = prev_reward.copy()
+                    resolved.append(prev_entry)
+                if pending:
+                    backlog[factor] = [item for item in pending if item not in resolved]
+                    if not backlog[factor]:
+                        backlog.pop(factor, None)
+            else:
+                bucket = backlog.setdefault(factor, [])
+                if entry not in bucket:
+                    bucket.append(entry)
+
+    def _default_rationale(self, behavior: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+        why = meta.get("description") or f"Executed {behavior}"
+        return {"why": str(why), "evidence": []}
+
+
+__all__ = ["Interpreter"]

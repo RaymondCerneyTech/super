@@ -29,7 +29,7 @@ class BehaviorRegistry:
         self._package_dir: Optional[Path] = None
 
     def discover(self, package_dir: str = "behaviors") -> "BehaviorRegistry":
-        """Locate behavior modules under ``package_dir`` and instantiate them."""
+        """Locate behavior modules under `package_dir` and instantiate them."""
         base_path = Path(package_dir)
         if not base_path.is_absolute():
             project_root = Path(__file__).resolve().parent.parent
@@ -57,7 +57,7 @@ class BehaviorRegistry:
         return self
 
     def load_meta(self) -> "BehaviorRegistry":
-        """Load ``.meta.yaml`` files that share the behavior basename."""
+        """Load `.meta.yaml` files that share the behavior basename."""
         if self._package_dir is None:
             self.discover()
 
@@ -100,6 +100,19 @@ class BehaviorRegistry:
         meta = self.meta(name)
         effects = meta.get("effects", [])
         return list(effects) if isinstance(effects, list) else []
+
+    def behavior_preconditions(self, name: str) -> List[str]:
+        meta = self.meta(name)
+        preconds = meta.get("preconditions", ["true"])
+        return list(preconds) if isinstance(preconds, list) else ["true"]
+
+    def behavior_requires_explanation(self, name: str) -> bool:
+        meta = self.meta(name)
+        return bool(meta.get("requires_explanation", False))
+
+    def behavior_cluster(self, name: str) -> str:
+        caps = [cap.lower() for cap in self.behavior_capabilities(name)]
+        return "creative" if "creative" in caps else "analytic"
 
     @staticmethod
     def _import_module_from_path(module_path: Path):

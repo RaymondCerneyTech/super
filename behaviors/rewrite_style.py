@@ -14,9 +14,24 @@ class RewriteStyle(Behavior):
     def run(self, ctx: Context) -> Result:
         data = ctx.setdefault("data", {})
         original = (data.get("text") or ctx.get("text") or "").strip()
-        tone = (data.get("tone") or ctx.get("tone") or "professional").lower()
-        if tone not in {"professional", "casual"}:
+        requested_tone = (data.get("tone") or ctx.get("tone") or "professional")
+        requested_tone_lower = requested_tone.lower()
+        router_goal = ""
+        router_state = ctx.get("router") if isinstance(ctx, dict) else {}
+        if isinstance(router_state, dict):
+            router_goal = str(router_state.get("goal_text") or "")
+        creative_hint = any(
+            keyword in requested_tone_lower or keyword in router_goal.lower()
+            for keyword in ("creative", "casual", "playful", "friendly")
+        )
+        if requested_tone_lower in {"professional", "casual"}:
+            tone = requested_tone_lower
+        elif creative_hint:
+            tone = "casual"
+        else:
             tone = "professional"
+        if creative_hint and tone == "professional":
+            tone = "casual"
 
         if "impossible" in original.lower():
             failure_message = "Unable to rewrite text for the requested tone."
@@ -28,11 +43,25 @@ class RewriteStyle(Behavior):
                 "logs": ["RewriteStyle could not satisfy the requested tone."],
                 "checks": {},
                 "reward": 0.0,
+                "rationale": {
+                    "why": "Tone request could not be satisfied",
+                    "evidence": [failure_message],
+                },
+                "effects": [],
             }
 
         rewritten = self._rewrite(original, tone)
         data["rewritten_text"] = rewritten
         data["tone"] = tone
+
+        rationale = {
+            "why": f"Adjusted tone to {tone}",
+            "evidence": [rewritten.splitlines()[0] if rewritten else ""],
+        }
+
+        effects = ["tone_adjusted"]
+        if creative_hint or tone != "professional":
+            effects.append("creative_tone")
 
         return {
             "ok": True,
@@ -40,6 +69,8 @@ class RewriteStyle(Behavior):
             "logs": [f"Rewrote text with {tone} tone"],
             "checks": {},
             "reward": 0.0,
+            "rationale": rationale,
+            "effects": effects,
         }
 
     def _rewrite(self, text: str, tone: str) -> str:
@@ -87,3 +118,6 @@ class RewriteStyle(Behavior):
             "Cheers!",
         ]
         return "\n".join(line for line in lines if line)
+
+
+__all__ = ["RewriteStyle"]

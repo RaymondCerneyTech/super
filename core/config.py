@@ -82,5 +82,4 @@ def _merge(dest: Dict[str, Any], src: Dict[str, Any]) -> None:
         else:
             dest[key] = value
 
-
 __all__ = ["load_config", "DEFAULT_CONFIG"]

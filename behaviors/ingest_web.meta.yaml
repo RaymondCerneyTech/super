@@ -1,0 +1,32 @@
+name: ingest_web
+description: Fetch web content (URL or RSS) and add it to the local index.
+inputs: []
+outputs: []
+args:
+  url:
+    type: str
+    default: null
+  rss:
+    type: str
+    default: null
+  path:
+    type: str
+    default: null
+  tags:
+    type: str
+    default: ""
+  limit:
+    type: int
+    default: 15
+  index_backend:
+    type: str
+    default: tfidf
+  lang_any:
+    type: bool
+    default: false
+preconditions:
+  - "true"
+effects: [has_knowledge]
+cost: 1.0
+capabilities: [analytic]
+requires_explanation: true

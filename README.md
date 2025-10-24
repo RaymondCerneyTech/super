@@ -97,6 +97,85 @@ Natural-language “behavior scripts.”
 
 Integration with human input (Super AI ↔ Mega AI collective loop).
 
+Self-Improving Router (LinUCB) & Logs + Plan Cache
+-------------------------------------
+
+The router now learns whether analytic or creative behaviors perform better for similar requests using a lightweight LinUCB contextual bandit. Each `plan` run appends one JSON Lines record to `logs/bandit.jsonl`, capturing the goal, extracted features, chosen cluster, rewards, and any unmet goal flags. JSON Lines is newline-delimited JSON, ideal for tailing or streaming analysis.
+
+Inspect learning trends:
+
+```
+python tools/analyze_bandit.py --log-file logs/bandit.jsonl --window 50
+```
+
+Add `--csv-out path/to/report.csv` to export rows for external plotting. Use `--no-bandit` on the CLI to disable bandit updates while still logging for comparisons.
+
+Web Ingestion + Verbose Answers
+-----------------------------------
+
+Quickly pull external knowledge into the local index and generate cited, sectioned answers directly from the CLI.
+
+Ingest a single page:
+
+```
+python main.py ingest --url https://example.com/guide --tags "guide,example" --index-backend hnsw
+```
+
+Ingest a feed:
+The HTML extractor keeps only the central article/main content and filters navigation or cookie banners; for best results, tag sources for precise retrieval.
+
+
+```
+python main.py ingest --rss https://example.com/feed.xml --index-backend hnsw
+```
+
+Ask for a long, cited answer:
+
+```
+python main.py ask --question "Explain X in depth with examples" --cited --grounded --verbose --min-words 1200 --fresh 30 --index-backend hnsw --explain
+```
+
+Answers borrow the `answer_verbose` behavior, which coordinates retrieval, optional aggregation, verification, and citation formatting for grounded responses. Add `--fresh DAYS` to bias retrieval toward recently ingested material when timeliness matters.
+
+Why Super AI Instead of ChatGPT
+--------------------------------
+- Deterministic workflow orchestration: you design the pipeline (retrieve → check → format → verify) and each step is logged and auditable.
+- Full control of data: ingest feeds, local files, or codebases and tag them for precision; nothing is hidden in a remote training snapshot.
+- Automation friendly: plan caching, router learning, and behavior metadata make repeat tasks fast, reusable, and consistent.
+- Extensible by design: drop new behaviors into `behaviors/` and wire them into plans without retraining a large model.
+
+Make It Friendlier & General Use
+--------------------------------
+Create a config file (defaults live in `config/examples/super.yaml`) and run commands with `--config super.yaml` or set `SUPER_CONFIG_PATH`. Example:
+
+```yaml
+ingest:
+  index_backend: hnsw
+  tags: quickstart
+
+ask:
+  k_passages: 10
+  max_chars: 9000
+  min_words: 900
+  cited: true
+  grounded: true
+  fresh_days: 30
+
+plan:
+  max_expansions: 18
+```
+
+```bash
+python main.py --config super.yaml ask --question "Summarize our latest policy updates" --explain
+```
+
+- **Bundle starter kits:** ship ingest seeds and ready-made plans for common domains (compliance, research, coding) to shorten setup time.
+- **Expose simple toggles:** support CLI/`super.yaml` configs plus env vars so non-developers can adjust backends, caching, and logging.
+- **Offer a quick UI:** a lightweight FastAPI or Streamlit app to ingest docs, run plans, and inspect answers/logs.
+- **Instrument analytics:** pair the plan/bandit analyzers with dashboards to monitor cache hit rates, failures, and recency coverage.
+- **Document behaviors:** keep `.meta.yaml` files descriptive—consider a “behavior gallery” folder so others can plug in modules.
+- **Provide an API wrapper:** optional REST endpoints so external systems can trigger `ask`/`plan` workflows programmatically.
+
 🪶 Licensing
 
 Code: MIT License © 2025 Ray Cerney
@@ -105,3 +184,46 @@ Documentation / Theory: Creative Commons Attribution 4.0 International (CC BY 4.
 
 Credit: “Super AI – Scriptable Unified Process for Evolved Reasoning by Ray Cerney.”
 Full CC license text - https://creativecommons.org/licenses/by/4.0/
+
+## Behavior-Based Reasoning: Planner + Bandit
+
+The CLI orchestrates behaviors with a best-first planner guided by a lightweight contextual bandit. Behaviors publish effects (have_summary, compliant, formatted) and multi-metric rewards; the planner composes them until the requested goal flags are satisfied.
+
+Example (1 minute):
+
+```
+python main.py plan --goal "summary,compliant,formatted" \
+  --text "Draft contract includes the secret roadmap." \
+  --explain
+```
+
+Sample trace:
+
+```
+Plan: summarize -> policy_check -> document_formatting
+1. summarize
+   why: Selected summary using extractive strategy
+   evidence: Artificial intelligence..., It enables automation...
+   effects: have_summary
+   rewards: overall=0.88 {"brevity": 1.0, "relevance": 0.75}
+2. policy_check
+   why: Flagged and redacted prohibited phrases
+   evidence: secret roadmap
+   effects: compliant
+   rewards: overall=0.95 {"manageable": 1.0, "preservation": 0.9}
+3. document_formatting
+   why: Formatted document in business style
+   evidence: headings: ..., tone: ..., wrap=80
+   effects: formatted
+   rewards: overall=0.92 {"readability": 0.9, "preservation": 0.85}
+Final reward:
+{
+  "brevity": 1.0,
+  "relevance": 0.75,
+  "fluency": 0.8,
+  "explanation_presence": 1.0,
+  "overall": 0.93
+}
+```
+
+Tweak the goal flags or text to explore other behaviour combinations; the router will gradually bias between analytic and creative clusters based on observed rewards.
