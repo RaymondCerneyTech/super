@@ -1,0 +1,16 @@
+name: zip_ops
+description: Zip or unzip directories/files inside the workspace.
+inputs: [op, src, dst]
+outputs: [path]
+effects: [archived, extracted]
+cost: 1.0
+capabilities: [analytic]
+requires_explanation: true
+args:
+  op:
+    type: str
+    enum: [zip, unzip]
+  src:
+    type: str
+  dst:
+    type: str

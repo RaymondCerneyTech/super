@@ -1,5 +1,40 @@
 # core/interfaces.py
-from typing import Any, Dict, List, TypedDict, Optional
+from typing import Any, Dict, List, Optional, TypedDict
+
+
+def _build_environment(ctx: "Context", flags: set[str]) -> Dict[str, Any]:
+    data = ctx.get("data", {}) if isinstance(ctx, dict) else {}
+    text = ctx.get("text") or data.get("text") or ""
+    summary = data.get("summary", "") if isinstance(data, dict) else ""
+    policies = data.get("policies", []) if isinstance(data, dict) else []
+
+    env: Dict[str, Any] = {
+        "text_len": len(text.split()) if isinstance(text, str) else 0,
+        "summary_len": len(summary.split()) if isinstance(summary, str) else 0,
+        "has_text": bool(text.strip()) if isinstance(text, str) else False,
+        "has_summary": bool(summary.strip()) if isinstance(summary, str) else False,
+        "policies": policies,
+        "flags": flags,
+    }
+    return env
+
+
+def evaluate_preconditions(
+    preconditions: List[str],
+    ctx: "Context",
+    flags: Optional[set[str]] = None,
+) -> bool:
+    env = _build_environment(ctx, flags or set())
+    allowed = {"len": len}
+    for expr in preconditions:
+        if not expr or expr.strip().lower() == "true":
+            continue
+        try:
+            if not bool(eval(expr, {"__builtins__": {}}, {**allowed, **env})):
+                return False
+        except Exception:
+            return False
+    return True
 
 class Context(TypedDict, total=False):
     text: str

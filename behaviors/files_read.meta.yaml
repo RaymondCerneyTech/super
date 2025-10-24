@@ -1,0 +1,12 @@
+name: files_read
+description: Read text content from a file into the context.
+inputs: [path]
+outputs: [text]
+effects: [has_text]
+cost: 1.0
+capabilities: [analytic]
+requires_explanation: true
+args:
+  path:
+    type: str
+    description: Path to the file within the workspace.

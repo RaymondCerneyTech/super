@@ -1,3 +1,26 @@
+API Server
+-----------
+Run the FastAPI wrapper to expose `/ask` and `/plan` endpoints:
+
+```bash
+uvicorn server:app --reload --port 8000
+```
+
+POST to `/ask` with a JSON payload such as `{"question": "Summarize ..."}` (plus optional overrides) to receive an answer and the plan metadata.
+You can pass `config_path` in the payload to reuse CLI configs.
+
+Act with `--task`
+-----------------
+The CLI can now run simple natural-language automation commands. It defaults to a dry-run preview (read-only); pass `--approve` and the necessary `--permit` flags to execute.
+
+```
+# Preview
+python main.py --task "Download https://example.com/file.zip to downloads/file.zip and unzip downloads/file.zip to data/"
+
+# Approve with write/net permissions
+python main.py --task "Download https://example.com/file.zip to downloads/file.zip and unzip downloads/file.zip to data/" --approve --permit read,write,net
+```
+
 🧠 Super AI — Scriptable Unified Process for Evolved Reasoning
 
 Author: Ray Cerney (2025)

@@ -3,6 +3,7 @@ import copy
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from core.audit import log_run
 from core.features import extract_feature_key
@@ -13,6 +14,13 @@ from core.registry import BehaviorRegistry
 from core.router import SimpleRouter
 
 BIAS_FILE = Path("adapter_biases.json")
+
+
+def build_runtime() -> tuple[BehaviorRegistry, Interpreter, SimpleRouter]:
+    registry = BehaviorRegistry().discover().load_meta()
+    interpreter = Interpreter(registry)
+    router = SimpleRouter(registry)
+    return registry, interpreter, router
 
 
 def load_adapter_biases(path: Path) -> Dict[str, Dict[str, float]]:
@@ -110,14 +118,35 @@ def main() -> None:
         default="",
         help="Execute the behaviors defined in a YAML plan file.",
     )
+    parser.add_argument(
+        "--task",
+        help="Natural-language automation command (download, unzip, summarize, etc.).",
+    )
+    parser.add_argument(
+        "--workspace",
+        default="workspace",
+        help="Workspace directory for --task operations.",
+    )
+    parser.add_argument(
+        "--approve",
+        action="store_true",
+        help="Approve executing the parsed steps (otherwise dry run).",
+    )
+    parser.add_argument(
+        "--permit",
+        default="",
+        help="Comma separated sandbox permissions (read,write,net,exec). Default is read.",
+    )
     args = parser.parse_args()
+
+    if args.task:
+        command_do(args)
+        return
 
     if args.plan and args.learn:
         parser.error("--plan cannot be combined with --learn.")
 
-    registry = BehaviorRegistry().discover().load_meta()
-    interpreter = Interpreter(registry)
-    router = SimpleRouter(registry)
+    registry, interpreter, router = build_runtime()
 
     initial_biases = load_adapter_biases(BIAS_FILE)
     learner = BanditLearner()
@@ -206,6 +235,92 @@ def main() -> None:
     )
     save_adapter_biases(BIAS_FILE, persisted_biases)
 
+
+
+def command_do(args: argparse.Namespace) -> None:
+    registry, interpreter, _ = build_runtime()
+    task = (args.task or "").strip()
+    if not task:
+        print("No task provided.")
+        return
+
+    workspace = Path(args.workspace or "workspace").resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    perms = _parse_permits(args.permit)
+    if not perms:
+        perms = {"read"}
+
+    ctx: Context = {
+        "text": task,
+        "data": {"task": task},
+        "perms": list(perms),
+        "dry_run": not args.approve,
+        "workspace": str(workspace),
+    }
+
+    parse_result = interpreter.execute("command_parse", ctx)
+    if not parse_result.get("ok"):
+        print("Could not parse task:", " | ".join(parse_result.get("logs", [])))
+        return
+
+    steps = parse_result.get("output", {}).get("steps", [])
+    if not steps:
+        print("No actionable commands recognized.")
+        return
+
+    print("Plan preview:")
+    for idx, step in enumerate(steps, start=1):
+        behavior = step.get("behavior")
+        args_map = step.get("args") or {}
+        summary = ", ".join(f"{k}={v}" for k, v in args_map.items())
+        print(f"  {idx}. {behavior} {summary}")
+
+    run_id = uuid4().hex
+    if not args.approve:
+        print("Dry run only. Re-run with --approve to execute.")
+        print(f"Run ID: {run_id}")
+        log_run({"mode": "do-dry-run", "task": task, "steps": steps, "run_id": run_id})
+        return
+
+    execution_logs: List[Dict[str, Any]] = []
+    for idx, step in enumerate(steps, start=1):
+        behavior = step.get("behavior")
+        args_map = step.get("args") or {}
+        if not behavior:
+            continue
+        data_layer = ctx.setdefault("data", {})
+        for key, value in args_map.items():
+            data_layer[key] = value
+
+        result = interpreter.execute(behavior, ctx)
+        logs = result.get("logs", []) or []
+        for line in logs:
+            print(f"[{behavior}] {line}")
+        entry = {
+            "index": idx,
+            "behavior": behavior,
+            "ok": bool(result.get("ok", True)),
+            "logs": logs,
+        }
+        execution_logs.append(entry)
+        if not result.get("ok", True):
+            print(f"Step {idx} ({behavior}) failed.")
+            break
+
+    log_run({"mode": "do", "task": task, "steps": execution_logs, "run_id": run_id})
+    print(f"Completed run. Run ID: {run_id}")
+
+
+def _parse_permits(value: Optional[str]) -> set[str]:
+    perms: set[str] = set()
+    if not value:
+        return perms
+    for token in value.split(","):
+        token = token.strip().lower()
+        if token:
+            perms.add(token)
+    return perms
 
 if __name__ == "__main__":
     main()

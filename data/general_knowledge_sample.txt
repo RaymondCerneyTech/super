@@ -1,0 +1,34 @@
+General Knowledge Notes
+=======================
+
+Science
+-------
+- Gravity is the attractive force that pulls objects with mass toward one another. On Earth it keeps the atmosphere and oceans in place and causes projectiles to follow curved paths.
+- Photosynthesis allows green plants, algae, and certain bacteria to convert light energy into chemical energy, producing glucose and releasing oxygen.
+- The periodic table organizes chemical elements by increasing atomic number (protons) and groups elements with similar properties into columns.
+
+History
+-------
+- The printing press, introduced to Europe by Johannes Gutenberg in the mid-1400s, drastically reduced the cost of books and accelerated the spread of ideas.
+- The Industrial Revolution (roughly 18th–19th centuries) marked a shift from agrarian economies to mechanized manufacturing, beginning in Britain and later spreading worldwide.
+- The United Nations was founded in 1945 to promote international cooperation, maintain peace, and support humanitarian initiatives.
+
+Geography
+---------
+- Continents are large, continuous landmasses; commonly recognized continents are Africa, Antarctica, Asia, Europe, North America, Oceania, and South America.
+- The hydrologic cycle describes how water evaporates, condenses into clouds, precipitates as rain or snow, and returns to waterways, driving weather patterns.
+
+Mathematics
+-----------
+- Prime numbers are natural numbers greater than 1 that have no positive divisors other than 1 and themselves.
+- Probability measures how likely an event is to occur; a probability of 0 means impossible, while 1 means certain.
+
+Technology
+----------
+- Algorithms are step-by-step procedures or rules to solve problems; they underpin computer programs and automated decision systems.
+- Cybersecurity best practices include using strong, unique passwords, enabling multi-factor authentication, and keeping software updated to patch vulnerabilities.
+
+Culture
+-------
+- Languages encode the history and values of a culture; many societies maintain oral traditions alongside written records.
+- Festivals often celebrate seasonal changes, historical events, or religious observances, providing communal identity and continuity.

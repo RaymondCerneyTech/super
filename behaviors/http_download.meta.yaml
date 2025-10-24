@@ -1,0 +1,16 @@
+name: http_download
+description: Download a URL into the workspace (supports dry-run).
+inputs: [url, dst]
+outputs: [download_info]
+effects: [downloaded]
+cost: 1.0
+capabilities: [analytic]
+requires_explanation: true
+args:
+  url:
+    type: str
+  dst:
+    type: str
+  sha256:
+    type: str
+    default: null

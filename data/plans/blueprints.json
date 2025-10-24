@@ -1,0 +1,1 @@
+{"flags=have_summary|backend=tfidf|verbosity=normal|tags=": {"behaviors": ["summarize"], "created_ts": 1761293211.9427838}, "flags=cited,grounded,verbose|backend=hnsw|verbosity=verbose|tags=": {"behaviors": ["retrieve", "answer_verbose"], "created_ts": 1761295182.6985462}}

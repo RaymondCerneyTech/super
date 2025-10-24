@@ -1,0 +1,21 @@
+name: files_write
+description: Write text content to a file inside the workspace.
+inputs: [path, content]
+outputs: []
+effects: [file_written]
+cost: 1.0
+capabilities: [analytic]
+requires_explanation: true
+args:
+  path:
+    type: str
+    description: Target file path relative to the workspace.
+  content:
+    type: str
+    description: Text content to write.
+  overwrite:
+    type: bool
+    default: false
+  create_dirs:
+    type: bool
+    default: true

@@ -13,6 +13,16 @@ from core.interfaces import Behavior
 class BehaviorRegistry:
     """Registry that discovers behavior classes and their metadata."""
 
+    DEFAULT_META: Dict[str, object] = {
+        "preconditions": ["true"],
+        "effects": [],
+        "cost": 1.0,
+        "capabilities": ["analytic"],
+        "requires_explanation": False,
+        "success_checks": [],
+        "keywords": [],
+    }
+
     def __init__(self) -> None:
         self._behaviors: Dict[str, Behavior] = {}
         self._meta: Dict[str, Dict] = {}
@@ -57,10 +67,12 @@ class BehaviorRegistry:
         self._meta.clear()
         for name in self._behaviors:
             meta_path = self._package_dir / f"{name}.meta.yaml"
-            if not meta_path.exists():
-                continue
-            with meta_path.open("r", encoding="utf-8") as fh:
-                self._meta[name] = yaml.safe_load(fh) or {}
+            if meta_path.exists():
+                with meta_path.open("r", encoding="utf-8") as fh:
+                    raw = yaml.safe_load(fh) or {}
+            else:
+                raw = {}
+            self._meta[name] = self._normalize_meta(raw)
 
         return self
 
@@ -68,10 +80,26 @@ class BehaviorRegistry:
         return self._behaviors[name]
 
     def meta(self, name: str) -> Dict:
-        return self._meta[name]
+        return self._meta.get(name, dict(self.DEFAULT_META))
 
     def list(self) -> List[str]:
         return sorted(self._behaviors.keys())
+
+    def behavior_capabilities(self, name: str) -> List[str]:
+        meta = self.meta(name)
+        return list(meta.get("capabilities", ["analytic"]))
+
+    def behavior_cost(self, name: str) -> float:
+        meta = self.meta(name)
+        try:
+            return float(meta.get("cost", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+
+    def behavior_effects(self, name: str) -> List[str]:
+        meta = self.meta(name)
+        effects = meta.get("effects", [])
+        return list(effects) if isinstance(effects, list) else []
 
     @staticmethod
     def _import_module_from_path(module_path: Path):
@@ -82,3 +110,23 @@ class BehaviorRegistry:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)  # type: ignore[attr-defined]
         return module
+
+    def _normalize_meta(self, raw: Dict[str, object]) -> Dict[str, object]:
+        normalized = dict(self.DEFAULT_META)
+        normalized.update(raw or {})
+
+        for key in ("preconditions", "effects", "capabilities", "keywords", "success_checks"):
+            value = normalized.get(key)
+            if not isinstance(value, list):
+                normalized[key] = [value] if value not in (None, "") else []
+
+        try:
+            normalized["cost"] = float(normalized.get("cost", 1.0))
+        except (TypeError, ValueError):
+            normalized["cost"] = 1.0
+
+        normalized["requires_explanation"] = bool(normalized.get("requires_explanation", False))
+        return normalized  # type: ignore[return-value]
+
+
+__all__ = ["BehaviorRegistry"]

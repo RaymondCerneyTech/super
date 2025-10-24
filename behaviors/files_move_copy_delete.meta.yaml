@@ -1,0 +1,20 @@
+name: files_move_copy_delete
+description: Move, copy, or delete files within the workspace.
+inputs: [op, src]
+outputs: []
+effects: [fs_changed]
+cost: 1.0
+capabilities: [analytic]
+requires_explanation: true
+args:
+  op:
+    type: str
+    enum: [move, copy, delete]
+  src:
+    type: str
+  dst:
+    type: str
+    default: null
+  recursive:
+    type: bool
+    default: false

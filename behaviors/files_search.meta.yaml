@@ -1,0 +1,16 @@
+name: files_search
+description: Search for files containing a substring in their path.
+inputs: [path, pattern]
+outputs: [matches]
+effects: [have_matches]
+cost: 1.0
+capabilities: [analytic]
+requires_explanation: true
+args:
+  path:
+    type: str
+  pattern:
+    type: str
+  recursive:
+    type: bool
+    default: true

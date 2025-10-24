@@ -1,0 +1,17 @@
+name: files_list
+description: List files or directories under a path.
+inputs: [path]
+outputs: [paths]
+effects: [have_paths]
+cost: 1.0
+capabilities: [analytic]
+requires_explanation: true
+args:
+  path:
+    type: str
+  recursive:
+    type: bool
+    default: false
+  glob:
+    type: str
+    default: "*"
