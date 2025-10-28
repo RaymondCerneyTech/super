@@ -1,0 +1,62 @@
+# super.yaml — starter config for your Behavioral AI system
+
+# --- Retrieval / Ask defaults ---
+ask:
+  k_passages: 6          # how many passages to retrieve
+  max_chars: 15000       # max combined chars passed to the writer
+  index_backend: hnsw    # tfidf | hnsw
+  cited: true            # include citations (if supported by behavior)
+  grounded: true         # prefer faithful answers
+  verbosity: verbose     # terse | normal | verbose
+  min_words: 600
+  max_words: 2000
+  log_file: logs/ask_runs.jsonl
+
+# --- Ingest defaults ---
+ingest:
+  index_backend: hnsw
+  tags: []
+  limit: 50
+
+# --- Planner defaults ---
+plan:
+  max_expansions: 8      # planning breadth/iterations
+  explanation_bonus: 0.1 # reward bump for behaviors that explain their steps
+  use_cache: true
+  log_file: logs/plan_runs.jsonl
+  # Effects you can mention in goals (aliases allowed):
+  # summary, formatted, compliant, cited, grounded, tone_adjusted, creative_tone
+
+# --- Router hints ---
+router:
+  prefer_analytic_for:
+    - compliant
+    - cited
+    - grounded
+  prefer_creative_for:
+    - creative_tone
+    - tone_adjusted
+  fallback_on_reward_leq: 0.0
+
+# --- Bandit / learning ---
+bandit:
+  enabled: true
+  log_file: logs/bandit.jsonl
+  # later: add "strategy: epsilon_greedy | ucb1 | thompson"
+  epsilon: 0.1
+
+# --- Safety for file ops (used by `do` path) ---
+safety:
+  dry_run_default: true
+  permitted_commands:
+    - unzip
+    - zip
+    - tar
+    - python
+    - node
+  require_permits: [read, write, net, exec]
+
+# --- Logging (roll up) ---
+logging:
+  runs_log: runs.log
+  actions_log: actions.log

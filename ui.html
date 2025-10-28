@@ -1,0 +1,211 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Super AI – Mini Console</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    h1 { margin-bottom: 0; }
+    .sub { color: #666; margin-top: 4px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-top: 16px; }
+    label { font-weight: 600; display: block; margin-top: 8px; }
+    input[type="text"], textarea, select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-family: inherit; }
+    textarea { min-height: 110px; }
+    button { padding: 10px 16px; border: 1px solid #333; background: #111; color: #fff; border-radius: 6px; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .tabs { display: flex; gap: 8px; margin-top: 16px; }
+    .tab { padding: 8px 12px; border: 1px solid #ccc; border-bottom: none; border-radius: 6px 6px 0 0; background: #f7f7f7; cursor: pointer; }
+    .tab.active { background: #fff; border-bottom-color: #fff; font-weight: 700; }
+    .panel { border: 1px solid #ccc; border-radius: 0 6px 6px 6px; padding: 16px; }
+    .muted { color: #777; font-size: 12px; }
+    pre { background: #0b1020; color: #e8f0ff; padding: 12px; border-radius: 8px; overflow: auto; max-height: 380px; }
+    .row > .col { flex: 1 1 320px; }
+    .badge { display: inline-block; background: #eef; color: #225; padding: 2px 8px; border-radius: 999px; margin-right: 6px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Super AI – Mini Console</h1>
+  <div class="sub">Quickly call <code>/ask</code> and <code>/plan</code> on your local FastAPI server.</div>
+
+  <div class="card">
+    <label>Server Base URL</label>
+    <input id="baseUrl" type="text" value="http://127.0.0.1:8000" />
+    <div class="muted">Tip: Run <code>uvicorn server:app --reload</code>. If you open this file from disk, you may need CORS enabled in <code>server.py</code> (see note below).</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="ask">Ask</div>
+    <div class="tab" data-tab="plan">Plan</div>
+  </div>
+
+  <div class="panel" id="panel-ask">
+    <div class="row">
+      <div class="col">
+        <label>Question</label>
+        <textarea id="q"></textarea>
+        <div class="row">
+          <div class="col">
+            <label>Tags (optional, comma-separated)</label>
+            <input id="tags" type="text" placeholder="guide, howto" />
+          </div>
+          <div class="col">
+            <label>k_passages</label>
+            <input id="k" type="text" value="6" />
+          </div>
+        </div>
+        <div class="row">
+          <div class="col">
+            <label>Min words</label>
+            <input id="minw" type="text" value="600" />
+          </div>
+          <div class="col">
+            <label>Max words</label>
+            <input id="maxw" type="text" value="2000" />
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <label><input type="checkbox" id="cited" checked> Cited</label>
+          <label><input type="checkbox" id="grounded" checked> Grounded</label>
+          <label><input type="checkbox" id="verbose" checked> Verbose</label>
+        </div>
+        <div style="margin-top:12px">
+          <button id="askBtn">Ask</button>
+        </div>
+      </div>
+      <div class="col">
+        <label>Result</label>
+        <pre id="askOut">—</pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-plan" style="display:none">
+    <div class="row">
+      <div class="col">
+        <label>Goal (effects to satisfy)</label>
+        <input id="goal" type="text" value="summary,compliant,formatted" />
+        <label>Text</label>
+        <textarea id="text"></textarea>
+        <div class="row">
+          <div class="col">
+            <label>Max expansions</label>
+            <input id="exp" type="text" value="8" />
+          </div>
+          <div class="col">
+            <label><input type="checkbox" id="explain" checked> Explain (trace)</label>
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <button id="planBtn">Plan</button>
+        </div>
+      </div>
+      <div class="col">
+        <label>Plan / Trace</label>
+        <pre id="planOut">—</pre>
+      </div>
+    </div>
+    <div class="muted" style="margin-top:8px">
+      Effects you can use in goals include:
+      <span class="badge">summary</span>
+      <span class="badge">formatted</span>
+      <span class="badge">compliant</span>
+      <span class="badge">cited</span>
+      <span class="badge">grounded</span>
+      <span class="badge">tone_adjusted</span>
+      <span class="badge">creative_tone</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>CORS note</strong> — If you open this file directly from disk (file://), browsers treat it as a different origin.
+    Add this to <code>server.py</code> to allow calls from <code>file://</code> or other ports:
+    <pre>
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+    </pre>
+  </div>
+
+<script>
+  const $ = sel => document.querySelector(sel);
+  const askTab = $('.tab[data-tab="ask"]');
+  const planTab = $('.tab[data-tab="plan"]');
+  const askPanel = $('#panel-ask');
+  const planPanel = $('#panel-plan');
+  function setTab(which) {
+    [askTab, planTab].forEach(t => t.classList.remove('active'));
+    [askPanel, planPanel].forEach(p => p.style.display = 'none');
+    if (which === 'ask') { askTab.classList.add('active'); askPanel.style.display = ''; }
+    else { planTab.classList.add('active'); planPanel.style.display = ''; }
+  }
+  askTab.onclick = () => setTab('ask');
+  planTab.onclick = () => setTab('plan');
+
+  function pretty(obj) {
+    try { return JSON.stringify(obj, null, 2); } catch { return String(obj); }
+  }
+
+  $('#askBtn').onclick = async () => {
+    const base = $('#baseUrl').value.trim().replace(/\/$/, '');
+    const body = {
+      question: $('#q').value,
+      k_passages: parseInt($('#k').value || '6', 10),
+      tags: $('#tags').value.split(',').map(s => s.trim()).filter(Boolean),
+      min_words: parseInt($('#minw').value || '600', 10),
+      max_words: parseInt($('#maxw').value || '2000', 10),
+      cited: $('#cited').checked,
+      grounded: $('#grounded').checked,
+      verbose: $('#verbose').checked,
+      explain: true
+    };
+    $('#askBtn').disabled = true;
+    $('#askOut').textContent = 'Running...';
+    try {
+      const res = await fetch(base + '/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      $('#askOut').textContent = pretty(data);
+    } catch (e) {
+      $('#askOut').textContent = 'Error: ' + e;
+    } finally {
+      $('#askBtn').disabled = false;
+    }
+  };
+
+  $('#planBtn').onclick = async () => {
+    const base = $('#baseUrl').value.trim().replace(/\/$/, '');
+    const body = {
+      goal: $('#goal').value,
+      text: $('#text').value,
+      max_expansions: parseInt($('#exp').value || '8', 10),
+      explain: $('#explain').checked
+    };
+    $('#planBtn').disabled = true;
+    $('#planOut').textContent = 'Planning...';
+    try {
+      const res = await fetch(base + '/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      $('#planOut').textContent = pretty(data);
+    } catch (e) {
+      $('#planOut').textContent = 'Error: ' + e;
+    } finally {
+      $('#planBtn').disabled = false;
+    }
+  };
+</script>
+</body>
+</html>

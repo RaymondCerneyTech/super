@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from urllib.parse import urlparse
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from core import fetch as fetchers
 from core.interfaces import Behavior, Context, Result
@@ -13,6 +15,9 @@ class IngestWeb(Behavior):
     inputs: List[str] = []
     outputs: List[str] = []
 
+    # ----------------------------
+    # Public entry
+    # ----------------------------
     def run(self, ctx: Context) -> Result:
         data = ctx.setdefault("data", {})
         url = data.get("url") or ctx.get("url")
@@ -52,6 +57,7 @@ class IngestWeb(Behavior):
                     "rationale": {"why": "Unable to read local file", "evidence": logs},
                     "effects": [],
                 }
+            text = self._sanitize_text(text, source_url=None)
             if not text.strip():
                 logs.append(f"Empty file: {path}")
             elif lang_any or fetchers.is_probably_english(text):
@@ -60,6 +66,7 @@ class IngestWeb(Behavior):
                 ingested.append(self._record_from_doc(doc, meta, tag_list))
             else:
                 skipped.append(path)
+
         elif rss:
             items = fetchers.fetch_rss(rss, limit=limit)
             logs.append(f"Fetched {len(items)} feed items from {rss}")
@@ -67,8 +74,9 @@ class IngestWeb(Behavior):
                 link = item.get("link") or ""
                 if not link:
                     continue
-                text, meta = fetchers.fetch_url(link)
+                text, meta = self._fetch_with_special_cases(link)
                 meta.update({"source": "rss", "feed_url": rss, "title": item.get("title", "")})
+                text = self._sanitize_text(text, source_url=meta.get("url", link))
                 if not text.strip():
                     skipped.append(link)
                     continue
@@ -78,17 +86,19 @@ class IngestWeb(Behavior):
                 combined_tags = tag_list + self._host_tags(link)
                 doc = index.add_document(text, meta, tags=combined_tags)
                 ingested.append(self._record_from_doc(doc, meta, combined_tags))
+
         else:  # url flow
-            text, meta = fetchers.fetch_url(url)  # type: ignore[arg-type]
+            text, meta = self._fetch_with_special_cases(url)  # type: ignore[arg-type]
             meta.setdefault("source", "url")
+            text = self._sanitize_text(text, source_url=meta.get("url", url))  # type: ignore[arg-type]
             if not text.strip():
-                logs.append(f"No text extracted from {url}")
+                logs.append(f"No text extracted from {meta.get('url') or url}")
             elif lang_any or fetchers.is_probably_english(text):
-                combined_tags = tag_list + self._host_tags(url)  # type: ignore[arg-type]
+                combined_tags = tag_list + self._host_tags(meta.get("url") or url)  # type: ignore[arg-type]
                 doc = index.add_document(text, meta, tags=combined_tags)
                 ingested.append(self._record_from_doc(doc, meta, combined_tags))
             else:
-                skipped.append(f"{url} (language filter)")
+                skipped.append(f"{meta.get('url') or url} (language filter)")
 
         previous_log = data.get("ingest_log")
         if isinstance(previous_log, list):
@@ -116,6 +126,9 @@ class IngestWeb(Behavior):
             "effects": effects,
         }
 
+    # ----------------------------
+    # Helpers
+    # ----------------------------
     def _normalize_tags(self, tags_raw: object) -> List[str]:
         if not tags_raw:
             return []
@@ -153,6 +166,66 @@ class IngestWeb(Behavior):
         if meta.get("fetched_ts"):
             record["fetched_ts"] = meta["fetched_ts"]
         return record
+
+    # ----------------------------
+    # Content fetching & cleaning
+    # ----------------------------
+    def _fetch_with_special_cases(self, url: str) -> Tuple[str, Dict[str, str]]:
+        """
+        Fetches URL with special handling for known noisy domains.
+        - arXiv /abs/*  --> prefer ar5iv HTML render
+        """
+        parsed = urlparse(url)
+        # arXiv -> ar5iv cleaner HTML
+        if parsed.netloc.endswith("arxiv.org") and parsed.path.startswith("/abs/"):
+            paper_id = parsed.path.split("/abs/")[-1]
+            ar5iv_url = f"https://ar5iv.org/html/{paper_id}"
+            text, meta = fetchers.fetch_url(ar5iv_url)
+            # carry original url as canonical
+            meta.setdefault("canonical_url", url)
+            meta["url"] = ar5iv_url
+            return text, meta
+
+        # default
+        text, meta = fetchers.fetch_url(url)
+        meta.setdefault("url", url)
+        return text, meta
+
+    def _sanitize_text(self, text: str, source_url: Optional[str]) -> str:
+        """
+        Light-weight sanitizer to drop obvious boilerplate (nav/footer/link bars).
+        Keeps everything dependency-free (regex + simple heuristics).
+        """
+        if not text:
+            return text
+
+        # Common chrome on blogs/docs
+        chrome_patterns = [
+            r"^\s*Skip to content\s*$",
+            r"^\s*Table of Contents\s*$",
+        ]
+
+        # arXiv/ar5iv boilerplate that often dominates retrieved passages
+        arxiv_patterns = [
+            r"arXivLabs.*?Learn more about arXivLabs\s*\.",
+            r"References & Citations.*?(NASA ADS|DBLP).*",
+            r"BibTeX formatted citation.*",
+            r"Recommenders and Search Tools.*",
+            r"Computer Science\s*>\s*Computation and Language",
+        ]
+
+        patterns = chrome_patterns + arxiv_patterns
+        cleaned = text
+        for pat in patterns:
+            cleaned = re.sub(pat, "", cleaned, flags=re.I | re.S)
+
+        # Collapse excessive blank lines
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+
+        # If still extremely short after cleaning, keep original (avoid over-strip)
+        if len(cleaned.strip()) < 120 and len(text.strip()) > 120:
+            return text
+        return cleaned
 
 
 __all__ = ["IngestWeb"]
