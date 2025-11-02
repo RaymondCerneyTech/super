@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import heapq
+import re
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from core.interfaces import Context, evaluate_preconditions
@@ -35,6 +36,14 @@ GOAL_ALIASES = {
     "list": "have_paths",
     "paths": "have_paths",
     "matches": "have_matches",
+    "code_edit": "code_update_detected",
+    "code_update": "code_update_detected",
+    "refactor": "code_refactored",
+    "code_refactored": "code_refactored",
+    "imports": "imports_fixed",
+    "imports_fixed": "imports_fixed",
+    "endpoint": "endpoint_generated",
+    "endpoint_generated": "endpoint_generated",
 }
 
 GOAL_PRIORITY_BONUS = {
@@ -55,6 +64,10 @@ GOAL_PRIORITY_BONUS = {
     "file_written": 0.35,
     "have_paths": 0.2,
     "have_matches": 0.2,
+    "code_update_detected": 0.3,
+    "code_refactored": 0.35,
+    "imports_fixed": 0.3,
+    "endpoint_generated": 0.35,
 }
 DEFAULT_GOAL_BONUS = 0.25
 
@@ -79,6 +92,10 @@ MEANING_EFFECT_PREFS: Dict[str, Dict[str, Set[str]]] = {
         "effects": {"file_written", "downloaded", "extracted", "have_paths"},
         "behaviors": {"command_parse", "files_write", "files_read", "http_download", "zip_ops"},
     },
+    "code_edit": {
+        "effects": {"code_update_detected", "code_refactored", "imports_fixed", "endpoint_generated"},
+        "behaviors": {"code_edit", "refactor_code", "add_endpoint"},
+    },
 }
 MEANING_DISCOVERY_BEHAVIOR = "meaning_infer"
 
@@ -102,6 +119,42 @@ def plan(
     cluster_bias: str = "analytic",
     max_expansions: int = 20,
 ) -> Dict[str, Any]:
+    pre_steps: List[Tuple[str, Dict[str, Any]]] = []
+    pre_flags: Set[str] = set()
+    current_meaning: Optional[str] = None
+    data_for_meaning: Dict[str, Any] = {}
+    if isinstance(ctx, dict):
+        data_for_meaning = ctx.setdefault("data", {})
+        meaning_value = data_for_meaning.get("meaning")
+        if not meaning_value:
+            try:
+                meaning_result = interpreter.execute("meaning_infer", ctx)
+            except Exception:
+                meaning_result = None
+            if meaning_result and meaning_result.get("ok", True):
+                rewards = ensure_reward_dict(meaning_result.get("rewards"))
+                pre_steps.append(
+                    (
+                        "meaning_infer",
+                        {
+                            "rewards": rewards,
+                            "rationale": meaning_result.get("rationale", {}),
+                            "effects": meaning_result.get("effects", []),
+                        },
+                    )
+                )
+                pre_flags.update(meaning_result.get("effects", []))
+        current_meaning = data_for_meaning.get("meaning")
+
+    code_pipeline: List[Tuple[str, str]] = []
+    if current_meaning == "code_edit":
+        code_pipeline = _infer_code_pipeline(ctx, registry)
+        if code_pipeline and isinstance(data_for_meaning, dict):
+            data_for_meaning.setdefault(
+                "code_pipeline",
+                [{"behavior": behavior, "effect": effect} for behavior, effect in code_pipeline],
+            )
+
     cache = shared_plan_cache()
     use_cache = not ctx.get("router", {}).get("no_cache") if isinstance(ctx, dict) else True
     tags = []
@@ -117,6 +170,13 @@ def plan(
         meaning_value = data.get("meaning")
         if isinstance(meaning_value, str) and meaning_value:
             meaning_signature = meaning_value
+    goal_flags = list(goal_flags)
+    if current_meaning == "code_edit":
+        if "code_update_detected" not in goal_flags:
+            goal_flags.append("code_update_detected")
+        for _, flag in code_pipeline:
+            if flag not in goal_flags:
+                goal_flags.append(flag)
     cache_key = cache.build_key(
         goal_flags,
         backend=str(data.get("index_backend", "tfidf")),
@@ -131,7 +191,7 @@ def plan(
 
     goal_set = set(goal_flags)
     initial_ctx = copy.deepcopy(ctx)
-    initial_flags: Set[str] = set()
+    initial_flags: Set[str] = set(pre_flags)
 
     heap: List[Tuple[float, int, Dict[str, Any]]] = []
     counter = 0
@@ -139,7 +199,7 @@ def plan(
         "utility": 0.0,
         "ctx": initial_ctx,
         "flags": initial_flags,
-        "steps": [],
+        "steps": pre_steps.copy(),
     }
     heapq.heappush(heap, (-0.0, counter, state))
 
@@ -238,7 +298,22 @@ def plan(
                 produced_effects.update(info.get("effects", []))
             meaning_bonus = _meaning_bonus(previous_meaning, current_meaning, behaviors_executed, produced_effects)
 
-            utility = current["utility"] + overall - 0.05 * cost - bias_penalty + progress_bonus + meaning_bonus
+            pipeline_bonus = _code_pipeline_bonus(
+                code_pipeline,
+                current["flags"],
+                produced_effects,
+                behaviors_executed,
+            )
+
+            utility = (
+                current["utility"]
+                + overall
+                - 0.05 * cost
+                - bias_penalty
+                + progress_bonus
+                + meaning_bonus
+                + pipeline_bonus
+            )
 
             new_state = {
                 "utility": utility,
@@ -255,6 +330,8 @@ def plan(
     best["goal_satisfied"] = bool(goal_set and goal_set.issubset(best["flags"])) if goal_set else True
     best["expansions"] = expansions
     best["remaining_flags"] = list(goal_set - set(best["flags"]))
+    if code_pipeline:
+        best["code_pipeline"] = code_pipeline
     if best.get("goal_satisfied"):
         cache.store(cache_key, best.get("steps", []))
     return best
@@ -340,3 +417,79 @@ def _meaning_bonus(
         bonus += 0.06 * len(behavior_matches)
 
     return min(bonus, 0.3)
+
+
+def _infer_code_pipeline(ctx: Context, registry: BehaviorRegistry) -> List[Tuple[str, str]]:
+    steps: List[Tuple[str, str]] = []
+    available = set(registry.list())
+
+    text_segments: List[str] = []
+    if isinstance(ctx, dict):
+        primary_text = ctx.get("text")
+        if isinstance(primary_text, str):
+            text_segments.append(primary_text)
+        data = ctx.get("data")
+        if isinstance(data, dict):
+            for key in ("text", "task", "goal", "request"):
+                value = data.get(key)
+                if isinstance(value, str):
+                    text_segments.append(value)
+    combined = " ".join(text_segments).strip().lower()
+    if not combined:
+        return steps
+
+    added_flags: Set[str] = set()
+
+    def add_step(name: str, flag: str) -> None:
+        if name in available and flag not in added_flags:
+            steps.append((name, flag))
+            added_flags.add(flag)
+
+    if any(keyword in combined for keyword in ("refactor", "async", "clean up", "cleanup")):
+        add_step("refactor_code", "code_refactored")
+
+    if "import" in combined and any(keyword in combined for keyword in ("fix", "clean", "tidy", "organize", "update")):
+        add_step("code_edit", "imports_fixed")
+
+    if any(keyword in combined for keyword in ("endpoint", "api", "route", "controller")):
+        add_step("add_endpoint", "endpoint_generated")
+
+    return steps
+
+
+def _code_pipeline_bonus(
+    pipeline: List[Tuple[str, str]],
+    achieved_flags: Set[str],
+    produced_effects: Set[str],
+    behaviors: List[str],
+) -> float:
+    if not pipeline:
+        return 0.0
+
+    completed = set(achieved_flags)
+    pipeline_flags = [flag for _, flag in pipeline]
+    for flag in produced_effects:
+        if flag in pipeline_flags:
+            completed.add(flag)
+
+    next_index = 0
+    for idx, (_, flag) in enumerate(pipeline):
+        if flag in completed:
+            next_index = idx + 1
+
+    bonus = 0.0
+    if next_index < len(pipeline):
+        next_behavior, next_flag = pipeline[next_index]
+        if next_flag in produced_effects or next_behavior in behaviors:
+            bonus += 0.18
+
+    for idx, (behavior, flag) in enumerate(pipeline):
+        if idx <= next_index:
+            continue
+        if flag in produced_effects or behavior in behaviors:
+            bonus -= 0.12
+
+    if all(flag in completed for _, flag in pipeline):
+        bonus += 0.1
+
+    return max(-0.25, min(bonus, 0.35))

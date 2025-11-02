@@ -1,0 +1,16 @@
+name: add_endpoint
+preconditions:
+  - "text_len >= 0"
+effects:
+  - code_update_detected
+  - endpoint_generated
+capabilities:
+  - analytic
+  - creative
+cost: 1.5
+requires_explanation: true
+keywords:
+  - endpoint
+  - fastapi
+  - api
+  - login

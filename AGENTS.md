@@ -33,6 +33,11 @@
   * Governance & analysis: `behaviors/policy_check.py`, `behaviors/grammar_correction.py`, `behaviors/sentiment_analysis.py`, `behaviors/social_post_optimize.py`.
   * Automation primitives: `behaviors/files_read.py`, `behaviors/files_write.py`, `behaviors/command_parse.py`, plus associated `.meta.yaml` descriptors.
 
+## Code Editing Behavior
+- `behaviors/refactor_code.py`: Refactors targeted functions into `async` stubs when requests call for async upgrades.
+- `behaviors/code_edit.py`: Orchestrates code-edit tasks, applying import fixes or delegating to specialized helpers based on the user prompt.
+- `behaviors/add_endpoint.py`: Generates FastAPI endpoint scaffolds (router + Pydantic models) for requests such as “add a user login endpoint.”
+
 ## Run & Setup Commands
 
 ```bash

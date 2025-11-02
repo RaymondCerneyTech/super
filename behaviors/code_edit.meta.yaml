@@ -1,0 +1,17 @@
+name: code_edit
+preconditions:
+  - "text_len >= 0"
+effects:
+  - code_update_detected
+  - imports_fixed
+capabilities:
+  - analytic
+  - creative
+cost: 1.0
+requires_explanation: true
+keywords:
+  - code
+  - refactor
+  - endpoint
+  - import
+  - router

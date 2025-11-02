@@ -1,0 +1,15 @@
+name: refactor_code
+preconditions:
+  - "text_len >= 0"
+effects:
+  - code_update_detected
+  - code_refactored
+capabilities:
+  - analytic
+  - creative
+cost: 1.2
+requires_explanation: true
+keywords:
+  - refactor
+  - async
+  - function

@@ -10,6 +10,7 @@ MEANING_OPTIONS: Tuple[str, ...] = (
     "ground_and_cite",
     "analyze_and_comment",
     "plan_and_execute",
+    "code_edit",
 )
 
 KEYWORD_HINTS: Dict[str, Iterable[str]] = {
@@ -18,6 +19,15 @@ KEYWORD_HINTS: Dict[str, Iterable[str]] = {
     "ground_and_cite": ("cite", "citation", "source", "evidence", "grounded", "reference", "attribution"),
     "analyze_and_comment": ("analyze", "analysis", "insight", "comment", "explain why", "diagnose", "sentiment"),
     "plan_and_execute": ("plan", "steps", "task list", "execute", "automation", "workflow", "todo"),
+    "code_edit": (
+        "refactor",
+        "add endpoint",
+        "add new endpoint",
+        "add a new endpoint",
+        "add behavior",
+        "fix import",
+        "update router",
+    ),
 }
 
 DATA_FLAGS: Dict[str, Iterable[str]] = {
@@ -26,6 +36,7 @@ DATA_FLAGS: Dict[str, Iterable[str]] = {
     "ground_and_cite": ("cited", "grounded", "citations", "references"),
     "analyze_and_comment": ("analysis", "insight", "sentiment"),
     "plan_and_execute": ("task", "tasks", "steps", "commands"),
+    "code_edit": ("code_update", "refactor", "endpoint"),
 }
 
 
@@ -75,6 +86,11 @@ def _infer_meaning(text: str, data: Dict[str, object], prior: object) -> str:
         for key in keys:
             if _flag_present(key, data):
                 scores[meaning] += 1.0
+
+    if "endpoint" in text_lower and ("add" in text_lower or "create" in text_lower):
+        scores["code_edit"] += 1.5
+    if "router" in text_lower and "update" in text_lower:
+        scores["code_edit"] += 1.5
 
     word_count = len(text_lower.split())
     if word_count > 0:
