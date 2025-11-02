@@ -1,1 +1,1 @@
-{"flags=cited,grounded,verbose|backend=hnsw|verbosity=verbose|tags=ai": {"behaviors": ["retrieve", "answer_verbose"], "created_ts": 1761446775.061537}}
+{"flags=compliant,formatted,have_summary|backend=tfidf|verbosity=normal|tags=|meaning=": {"behaviors": ["summarize", "policy_check", "document_formatting"], "created_ts": 1762041962.494933}, "flags=formatted,have_summary|backend=tfidf|verbosity=normal|tags=|meaning=": {"behaviors": ["summarize", "document_formatting"], "created_ts": 1762042850.1791413}}

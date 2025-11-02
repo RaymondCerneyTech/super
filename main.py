@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sys
 from textwrap import dedent
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, cast
 from uuid import uuid4
 
 from core.audit import log_run
@@ -66,7 +66,7 @@ def build_runtime() -> tuple[BehaviorRegistry, Interpreter, SimpleRouter]:
     return registry, interpreter, router
 
 
-def print_reward(result: dict) -> None:
+def print_reward(result: Mapping[str, Any]) -> None:
     reward = ensure_reward_dict(result.get("rewards") or result.get("reward"))
     print("Reward:")
     print(json.dumps(reward, indent=2))
@@ -84,16 +84,56 @@ def _prepare_context(
     no_bandit: bool = False,
     log_file: str | None = None,
 ) -> Context:
-    ctx: Context = {
-        "text": text,
-        "data": {"text": text},
-        "router": {"goal_text": goal_text, "no_bandit": no_bandit},
-    }
+    ctx: Context = {"text": text}
+    data = _ensure_data(ctx)
+    data["text"] = text
+    router_state = _ensure_router(ctx)
+    router_state["goal_text"] = goal_text
+    router_state["no_bandit"] = no_bandit
     if log_file:
-        ctx["router"]["log_file"] = log_file
+        router_state["log_file"] = log_file
     cluster = router.cluster_hint(goal_text, ctx)
-    ctx["router"]["cluster_bias"] = cluster
+    router_state["cluster_bias"] = cluster
     return ctx
+
+
+def _ensure_data(ctx: Context) -> Dict[str, Any]:
+    data = ctx.get("data")
+    if not isinstance(data, dict):
+        data = {}
+        ctx["data"] = data
+    return cast(Dict[str, Any], data)
+
+
+def _ensure_router(ctx: Context) -> Dict[str, Any]:
+    router_state = ctx.get("router")
+    if not isinstance(router_state, dict):
+        router_state = {}
+        ctx["router"] = router_state
+    return cast(Dict[str, Any], router_state)
+
+
+def _optional_str(value: object) -> Optional[str]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _optional_int(value: object, default: int) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return default
+        try:
+            return int(stripped)
+        except ValueError:
+            return default
+    return default
 
 
 def _config_section(args: argparse.Namespace, section: str) -> Dict[str, object]:
@@ -105,8 +145,10 @@ def _config_section(args: argparse.Namespace, section: str) -> Dict[str, object]
 def command_summarize(args: argparse.Namespace) -> None:
     registry, interpreter, router = build_runtime()
     ctx = _prepare_context(args.text, args.text, router)
-    cluster = ctx["router"]["cluster_bias"]
-    ctx["data"].update(
+    router_state = _ensure_router(ctx)
+    data = _ensure_data(ctx)
+    cluster = router_state["cluster_bias"]
+    data.update(
         {
             "max_words": args.max_words,
             "max_sentences": args.max_sentences,
@@ -115,7 +157,7 @@ def command_summarize(args: argparse.Namespace) -> None:
     )
     result = interpreter.execute("summarize", ctx)
     router.register_outcome(cluster, result.get("rewards", {}))
-    summary = ctx["data"].get("summary", "")
+    summary = data.get("summary", "")
     print("Summary:\n" + summary)
     print_reward(result)
 
@@ -123,11 +165,13 @@ def command_summarize(args: argparse.Namespace) -> None:
 def command_format(args: argparse.Namespace) -> None:
     registry, interpreter, router = build_runtime()
     ctx = _prepare_context(args.text, args.text, router)
-    cluster = ctx["router"]["cluster_bias"]
-    ctx["data"].update({"format_style": args.style, "wrap_width": args.wrap_width})
+    router_state = _ensure_router(ctx)
+    data = _ensure_data(ctx)
+    cluster = router_state["cluster_bias"]
+    data.update({"format_style": args.style, "wrap_width": args.wrap_width})
     result = interpreter.execute("document_formatting", ctx)
     router.register_outcome(cluster, result.get("rewards", {}))
-    formatted = ctx["data"].get("formatted_text", "")
+    formatted = data.get("formatted_text", "")
     print("Formatted Document:\n" + formatted)
     print_reward(result)
 
@@ -136,12 +180,14 @@ def command_optimize(args: argparse.Namespace) -> None:
     registry, interpreter, router = build_runtime()
     goal_text = f"optimize {args.platform} {args.topic}"
     ctx = _prepare_context(args.text, goal_text, router)
-    cluster = ctx["router"]["cluster_bias"]
-    ctx["data"].update({"platform": args.platform, "topic": args.topic, "max_length": args.max_length})
+    router_state = _ensure_router(ctx)
+    data = _ensure_data(ctx)
+    cluster = router_state["cluster_bias"]
+    data.update({"platform": args.platform, "topic": args.topic, "max_length": args.max_length})
     result = interpreter.execute("social_post_optimize", ctx)
     router.register_outcome(cluster, result.get("rewards", {}))
-    print("Optimized Text:\n" + ctx["data"].get("optimized_text", ""))
-    print("Hashtags:", ", ".join(ctx["data"].get("hashtags", [])))
+    print("Optimized Text:\n" + data.get("optimized_text", ""))
+    print("Hashtags:", ", ".join(data.get("hashtags", [])))
     print_reward(result)
 
 
@@ -150,13 +196,15 @@ def command_check(args: argparse.Namespace) -> None:
     policies = [item.strip() for item in args.policies.split(",") if item.strip()]
     goal_text = "compliance check"
     ctx = _prepare_context(args.text, goal_text, router)
-    cluster = ctx["router"]["cluster_bias"]
-    ctx["data"].update({"policies": policies, "policy_replacement": args.replacement})
+    router_state = _ensure_router(ctx)
+    data = _ensure_data(ctx)
+    cluster = router_state["cluster_bias"]
+    data.update({"policies": policies, "policy_replacement": args.replacement})
     result = interpreter.execute("policy_check", ctx)
     router.register_outcome(cluster, result.get("rewards", {}))
-    print("Sanitized Text:\n" + ctx["data"].get("sanitized_text", ""))
+    print("Sanitized Text:\n" + data.get("sanitized_text", ""))
     print("Violations:")
-    for violation in ctx["data"].get("violations", []):
+    for violation in data.get("violations", []):
         print(f" - {violation['phrase']} -> {violation['context']}")
     print_reward(result)
 
@@ -183,9 +231,11 @@ def command_ingest(args: argparse.Namespace) -> None:
     if lang_any:
         data["lang_any"] = True
 
-    ctx: Context = {"data": data}
+    ctx: Context = {}
+    payload = _ensure_data(ctx)
+    payload.update(data)
     result = interpreter.execute("ingest_web", ctx)
-    ingested = ctx["data"].get("ingest_log", [])
+    ingested = payload.get("ingest_log", [])
     print(f"Docs ingested: {len(ingested)} (backend={index_backend})")
     skipped = result.get("output", {}).get("skipped", [])
     if skipped:
@@ -204,8 +254,9 @@ def command_ask(args: argparse.Namespace) -> None:
     max_chars = args.max_chars if args.max_chars is not None else config.get("max_chars", 12000)
     tags = args.tags if args.tags is not None else config.get("tags", "")
     fresh_days = args.fresh if args.fresh is not None else config.get("fresh_days")
-    log_file = args.log_file or config.get("log_file")
-    max_expansions = args.max_expansions if args.max_expansions is not None else config.get("max_expansions", 25)
+    log_file = args.log_file if isinstance(args.log_file, str) else _optional_str(config.get("log_file"))
+    raw_max_exp = args.max_expansions if args.max_expansions is not None else config.get("max_expansions")
+    max_expansions = _optional_int(raw_max_exp, 25)
     explain = bool(args.explain or config.get("explain", False))
     no_bandit = bool(args.no_bandit or config.get("no_bandit", False))
 
@@ -253,9 +304,11 @@ def command_ask(args: argparse.Namespace) -> None:
         no_bandit=no_bandit,
         log_file=log_file,
     )
-    cluster = ctx["router"]["cluster_bias"]
+    router_state = _ensure_router(ctx)
+    data = _ensure_data(ctx)
+    cluster = router_state["cluster_bias"]
 
-    ctx["data"].update(
+    data.update(
         {
             "question": args.question,
             "index_backend": index_backend,
@@ -267,9 +320,9 @@ def command_ask(args: argparse.Namespace) -> None:
         }
     )
     if max_words:
-        ctx["data"]["max_words"] = max_words
+        data["max_words"] = max_words
     if fresh_days:
-        ctx["data"]["fresh_days"] = fresh_days
+        data["fresh_days"] = fresh_days
 
     goal_flags = normalise_goal_flags(goal_str)
     plan_result = plan(
@@ -306,7 +359,8 @@ def command_ask(args: argparse.Namespace) -> None:
             print(f"   rewards: overall={round(rewards.get('overall', 0.0), 3)} {reward_preview}")
 
     final_ctx = plan_result.get("ctx", ctx)
-    final_data = final_ctx.get("data", {})
+    final_data_obj = final_ctx.get("data", {})
+    final_data = final_data_obj if isinstance(final_data_obj, dict) else {}
     final_rewards = ensure_reward_dict(steps[-1][1].get("rewards", {}))
     router.register_outcome(cluster, final_rewards)
     router.register_bandit_outcome(final_ctx, final_rewards)
@@ -326,7 +380,8 @@ def command_ask(args: argparse.Namespace) -> None:
             print("Unmet goal flags:", ", ".join(remaining))
 
     if log_file:
-        router_state = final_ctx.get("router", {})
+        final_router = final_ctx.get("router")
+        router_state = final_router if isinstance(final_router, dict) else {}
         record = {
             "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "question": args.question,
@@ -337,17 +392,19 @@ def command_ask(args: argparse.Namespace) -> None:
             "steps": [behavior for behavior, _ in steps],
             "word_count": final_data.get("word_count"),
             "no_bandit": bool(no_bandit),
+            "meaning": final_data.get("meaning"),
         }
-        append_jsonl(log_file, record)
+        append_jsonl(Path(log_file), record)
 
 
 def command_plan(args: argparse.Namespace) -> None:
     registry, interpreter, router = build_runtime()
     config = _config_section(args, "plan")
 
-    log_file = args.log_file or config.get("log_file")
+    log_file = args.log_file if isinstance(args.log_file, str) else _optional_str(config.get("log_file"))
     no_bandit = bool(args.no_bandit or config.get("no_bandit", False))
-    max_expansions = args.max_expansions if args.max_expansions is not None else config.get("max_expansions", 20)
+    raw_max_exp_plan = args.max_expansions if args.max_expansions is not None else config.get("max_expansions")
+    max_expansions = _optional_int(raw_max_exp_plan, 20)
     explain = bool(args.explain or config.get("explain", False))
 
     goal_flags = normalise_goal_flags(args.goal)
@@ -363,11 +420,13 @@ def command_plan(args: argparse.Namespace) -> None:
         no_bandit=no_bandit,
         log_file=log_file,
     )
-    cluster = ctx["router"]["cluster_bias"]
+    router_state = _ensure_router(ctx)
+    data = _ensure_data(ctx)
+    cluster = router_state["cluster_bias"]
     policies_arg = getattr(args, "policies", "") or ""
     policies = [item.strip() for item in policies_arg.split(",") if item.strip()]
     if policies:
-        ctx["data"]["policies"] = policies
+        data["policies"] = policies
 
     plan_result = plan(
         goal_flags,
@@ -414,7 +473,8 @@ def command_plan(args: argparse.Namespace) -> None:
         if remaining:
             print("Unmet goal flags:", ", ".join(remaining))
     if log_file:
-        router_state = final_ctx.get("router", {})
+        final_router = final_ctx.get("router")
+        router_state = final_router if isinstance(final_router, dict) else {}
         record = {
             "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "goal": args.goal,
@@ -424,8 +484,9 @@ def command_plan(args: argparse.Namespace) -> None:
             "steps": [behavior for behavior, _ in steps],
             "unmet_goal_flags": plan_result.get("remaining_flags", []),
             "no_bandit": bool(no_bandit),
+            "meaning": final_ctx.get("data", {}).get("meaning"),
         }
-        append_jsonl(log_file, record)
+        append_jsonl(Path(log_file), record)
 
 
 def command_do(args: argparse.Namespace) -> None:
@@ -442,13 +503,12 @@ def command_do(args: argparse.Namespace) -> None:
     if not perms:
         perms = {"read"}
 
-    ctx: Context = {
-        "text": task,
-        "data": {"task": task},
-        "perms": list(perms),
-        "dry_run": not args.approve,
-        "workspace": str(workspace),
-    }
+    ctx: Context = {"text": task, "dry_run": not args.approve}
+    data = _ensure_data(ctx)
+    data["task"] = task
+    ctx_extra = cast(Dict[str, Any], ctx)
+    ctx_extra["perms"] = list(perms)
+    ctx_extra["workspace"] = str(workspace)
 
     parse_result = interpreter.execute("command_parse", ctx)
     if not parse_result.get("ok"):
@@ -471,7 +531,8 @@ def command_do(args: argparse.Namespace) -> None:
     if not args.approve:
         print("Dry run only. Re-run with --approve to execute.")
         print(f"Run ID: {run_id}")
-        log_run({"mode": "do-dry-run", "task": task, "steps": steps, "run_id": run_id})
+        meaning_snapshot = ctx.get("data", {}).get("meaning")
+        log_run({"mode": "do-dry-run", "task": task, "steps": steps, "run_id": run_id, "meaning": meaning_snapshot})
         return
 
     execution_logs: List[Dict[str, Any]] = []
@@ -500,7 +561,8 @@ def command_do(args: argparse.Namespace) -> None:
             print(f"Step {idx} ({behavior}) failed.")
             break
 
-    log_run({"mode": "do", "task": task, "steps": execution_logs, "run_id": run_id})
+    meaning_snapshot = ctx.get("data", {}).get("meaning")
+    log_run({"mode": "do", "task": task, "steps": execution_logs, "run_id": run_id, "meaning": meaning_snapshot})
     print(f"Completed run. Run ID: {run_id}")
 
 

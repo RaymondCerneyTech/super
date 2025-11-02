@@ -24,6 +24,8 @@ GOAL_ALIASES = {
     "grounded": "grounded",
     "verbose": "verbose",
     "fresh": "fresh",
+    "meaning": "meaning_inferred",
+    "meaning_infer": "meaning_inferred",
     "download": "downloaded",
     "downloaded": "downloaded",
     "extract": "extracted",
@@ -47,6 +49,7 @@ GOAL_PRIORITY_BONUS = {
     "grounded": 0.4,
     "verbose": 0.3,
     "fresh": 0.3,
+    "meaning_inferred": 0.25,
     "downloaded": 0.35,
     "extracted": 0.3,
     "file_written": 0.35,
@@ -54,6 +57,30 @@ GOAL_PRIORITY_BONUS = {
     "have_matches": 0.2,
 }
 DEFAULT_GOAL_BONUS = 0.25
+
+MEANING_EFFECT_PREFS: Dict[str, Dict[str, Set[str]]] = {
+    "compress_to_essence": {
+        "effects": {"have_summary", "concise"},
+        "behaviors": {"summarize", "aggregate", "meaning_infer"},
+    },
+    "transform_style": {
+        "effects": {"tone_adjusted", "creative_tone"},
+        "behaviors": {"rewrite_style", "document_formatting"},
+    },
+    "ground_and_cite": {
+        "effects": {"cited", "grounded", "compliant"},
+        "behaviors": {"answer_verbose", "policy_check", "retrieve"},
+    },
+    "analyze_and_comment": {
+        "effects": {"have_summary", "concise"},
+        "behaviors": {"report_from_data", "sentiment_analysis", "answer_verbose", "aggregate"},
+    },
+    "plan_and_execute": {
+        "effects": {"file_written", "downloaded", "extracted", "have_paths"},
+        "behaviors": {"command_parse", "files_write", "files_read", "http_download", "zip_ops"},
+    },
+}
+MEANING_DISCOVERY_BEHAVIOR = "meaning_infer"
 
 
 def normalise_goal_flags(goal: str) -> List[str]:
@@ -85,7 +112,18 @@ def plan(
             tags = [str(tag) for tag in tag_value]
         elif isinstance(tag_value, str):
             tags = [tag.strip() for tag in tag_value.split(",") if tag.strip()]
-    cache_key = cache.build_key(goal_flags, backend=str(data.get("index_backend", "tfidf")), verbosity=str(data.get("verbosity", "normal")), tags=tags)
+    meaning_signature = None
+    if isinstance(data, dict):
+        meaning_value = data.get("meaning")
+        if isinstance(meaning_value, str) and meaning_value:
+            meaning_signature = meaning_value
+    cache_key = cache.build_key(
+        goal_flags,
+        backend=str(data.get("index_backend", "tfidf")),
+        verbosity=str(data.get("verbosity", "normal")),
+        tags=tags,
+        meaning=meaning_signature,
+    )
     if use_cache:
         cached_behaviors = cache.lookup(cache_key)
         if cached_behaviors:
@@ -153,6 +191,7 @@ def plan(
             else:
                 bias_penalty = 0.0
 
+            behaviors_executed = [behavior]
             new_flags = current["flags"].union(step_result.get("effects", []))
 
             if extra_steps:
@@ -171,6 +210,7 @@ def plan(
                         continue
                     sub_rewards = ensure_reward_dict(sub_result.get("rewards"))
                     total_reward += sub_rewards.get("overall", 0.0)
+                    behaviors_executed.append(sub_behavior)
                     step_entries.append(
                         (
                             sub_behavior,
@@ -190,7 +230,15 @@ def plan(
             overall = total_reward / step_count
             gained_flags = (new_flags - current["flags"]) & goal_set
             progress_bonus = sum(GOAL_PRIORITY_BONUS.get(flag, DEFAULT_GOAL_BONUS) for flag in gained_flags)
-            utility = current["utility"] + overall - 0.05 * cost - bias_penalty + progress_bonus
+
+            previous_meaning = _current_meaning(current["ctx"])
+            current_meaning = _current_meaning(new_ctx)
+            produced_effects: Set[str] = set()
+            for _, info in step_entries:
+                produced_effects.update(info.get("effects", []))
+            meaning_bonus = _meaning_bonus(previous_meaning, current_meaning, behaviors_executed, produced_effects)
+
+            utility = current["utility"] + overall - 0.05 * cost - bias_penalty + progress_bonus + meaning_bonus
 
             new_state = {
                 "utility": utility,
@@ -251,3 +299,44 @@ def _execute_cached_plan(
         "expansions": 0,
         "remaining_flags": list(goal_set - flags),
     }
+
+
+def _current_meaning(ctx: Context) -> Optional[str]:
+    if not isinstance(ctx, dict):
+        return None
+    data = ctx.get("data")
+    if isinstance(data, dict):
+        meaning = data.get("meaning")
+        if isinstance(meaning, str) and meaning:
+            return meaning
+    return None
+
+
+def _meaning_bonus(
+    previous: Optional[str],
+    current: Optional[str],
+    behaviors: List[str],
+    effects: Set[str],
+) -> float:
+    bonus = 0.0
+    active_meaning = current or previous
+
+    if previous is None and current and MEANING_DISCOVERY_BEHAVIOR in behaviors:
+        bonus += 0.12
+
+    if not active_meaning:
+        return bonus
+
+    prefs = MEANING_EFFECT_PREFS.get(active_meaning)
+    if not prefs:
+        return bonus
+
+    effect_matches = set(effects).intersection(prefs.get("effects", set()))
+    behavior_matches = set(behaviors).intersection(prefs.get("behaviors", set()))
+
+    if effect_matches:
+        bonus += 0.08 * len(effect_matches)
+    if behavior_matches:
+        bonus += 0.06 * len(behavior_matches)
+
+    return min(bonus, 0.3)

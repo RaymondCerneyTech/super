@@ -8,6 +8,9 @@ class Context(TypedDict, total=False):
     memory: Dict[str, Any]
     signals: Dict[str, Any]  # e.g., active app, file path, user prefs
     dry_run: bool
+    router: Dict[str, Any]
+    perms: List[str]
+    workspace: str
 
 
 class Result(TypedDict, total=False):

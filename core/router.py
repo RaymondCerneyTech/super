@@ -10,6 +10,36 @@ from core.interfaces import Context, evaluate_preconditions
 from core.registry import BehaviorRegistry
 from core.rewards import aggregate_reward, ensure_reward_dict
 
+MEANING_OPTIONS: Tuple[str, ...] = (
+    "compress_to_essence",
+    "transform_style",
+    "ground_and_cite",
+    "analyze_and_comment",
+    "plan_and_execute",
+)
+
+MEANING_CLUSTER_HINT = {
+    "compress_to_essence": "analytic",
+    "ground_and_cite": "analytic",
+    "analyze_and_comment": "analytic",
+    "plan_and_execute": "analytic",
+    "transform_style": "creative",
+}
+
+MEANING_BEHAVIOR_WEIGHTS: Dict[str, Dict[str, float]] = {
+    "compress_to_essence": {"summarize": 0.25, "aggregate": 0.15, "meaning_infer": 0.1},
+    "transform_style": {"rewrite_style": 0.25, "document_formatting": 0.15},
+    "ground_and_cite": {"answer_verbose": 0.25, "policy_check": 0.18, "retrieve": 0.1},
+    "analyze_and_comment": {"report_from_data": 0.2, "sentiment_analysis": 0.2, "answer_verbose": 0.15},
+    "plan_and_execute": {
+        "command_parse": 0.25,
+        "files_write": 0.18,
+        "files_read": 0.1,
+        "http_download": 0.1,
+        "zip_ops": 0.08,
+    },
+}
+
 
 def extract_features(goal_text: str, text: str, data: Optional[Dict[str, Any]] = None) -> List[float]:
     goal = (goal_text or "").lower()
@@ -31,6 +61,7 @@ def extract_features(goal_text: str, text: str, data: Optional[Dict[str, Any]] =
 
     k_passages = 12
     max_chars = 12000
+    meaning_value = None
     if isinstance(data, dict):
         k_passages = int(data.get("k_passages") or k_passages)
         max_chars = int(data.get("max_chars") or max_chars)
@@ -38,6 +69,9 @@ def extract_features(goal_text: str, text: str, data: Optional[Dict[str, Any]] =
             wants_verbose = 1.0
         if data.get("fresh_days"):
             wants_fresh = 1.0
+        raw_meaning = data.get("meaning")
+        if isinstance(raw_meaning, str):
+            meaning_value = raw_meaning.lower()
 
     k_norm = min(1.0, k_passages / 20.0)
     chars_norm = min(1.0, max_chars / 20000.0)
@@ -58,6 +92,15 @@ def extract_features(goal_text: str, text: str, data: Optional[Dict[str, Any]] =
         k_norm,
         chars_norm,
     ]
+
+    meaning_vector = [0.0] * len(MEANING_OPTIONS)
+    if meaning_value:
+        for index, option in enumerate(MEANING_OPTIONS):
+            if meaning_value == option:
+                meaning_vector[index] = 1.0
+                break
+    features.extend(meaning_vector)
+
     return [float(value) for value in features]
 
 
@@ -179,10 +222,17 @@ class SimpleRouter:
         data = {}
         if isinstance(ctx, dict):
             data = ctx.get("data", {}) if isinstance(ctx.get("data"), dict) else {}
+        meaning_value = None
+        if isinstance(data, dict):
+            raw_meaning = data.get("meaning")
+            if isinstance(raw_meaning, str) and raw_meaning:
+                meaning_value = raw_meaning.lower()
         features = extract_features(goal_text, text, data)
         if isinstance(router_state, dict):
             router_state["bandit_features"] = features
             router_state["bandit_disabled"] = bool(router_state.get("no_bandit", False))
+            if meaning_value:
+                router_state["meaning"] = meaning_value
         use_bandit = isinstance(router_state, dict) and not router_state.get("no_bandit", False)
         if use_bandit:
             arm = self._bandit.select(features)
@@ -230,6 +280,15 @@ class SimpleRouter:
         if isinstance(router_state, dict):
             bias = router_state.get("cluster_bias")
             text = (router_state.get("goal_text") or text).lower()
+        meaning_value = None
+        if isinstance(ctx, dict):
+            data = ctx.get("data")
+            if isinstance(data, dict):
+                raw_meaning = data.get("meaning")
+                if isinstance(raw_meaning, str) and raw_meaning:
+                    meaning_value = raw_meaning.lower()
+            if isinstance(router_state, dict) and meaning_value:
+                router_state["meaning"] = meaning_value
         if not bias:
             bias = self.cluster_hint(text, ctx)
 
@@ -265,6 +324,8 @@ class SimpleRouter:
             bias_adjustment = self._capability_bias(name, bias)
             hits += bias_adjustment
 
+            hits += self._meaning_behavior_bias(meaning_value, name)
+
             bias = bias or "analytic"
             bias_hits = self.adapters.get(name, 0.0)
             logits[name] = 0.1 + hits + bias_hits
@@ -299,6 +360,16 @@ class SimpleRouter:
         analytic_score = self.cluster_values.get("analytic", 0.6)
         creative_score = self.cluster_values.get("creative", 0.6)
 
+        meaning_value = None
+        if ctx and isinstance(ctx, dict):
+            data = ctx.get("data")
+            if isinstance(data, dict):
+                raw_meaning = data.get("meaning")
+                if isinstance(raw_meaning, str) and raw_meaning:
+                    meaning_value = raw_meaning.lower()
+        if meaning_value and meaning_value in MEANING_CLUSTER_HINT:
+            return MEANING_CLUSTER_HINT[meaning_value]
+
         analytic_goal_keywords = {"summary", "compliant", "formatted", "exact", "concise"}
         creative_goal_keywords = {"creative", "tone", "style", "rewrite"}
 
@@ -321,6 +392,10 @@ class SimpleRouter:
             text = (ctx.get("text") or ctx.get("data", {}).get("text") or "")
             if len(text.split()) > 80:
                 analytic_score += 0.05
+            if meaning_value == "transform_style":
+                creative_score += 0.15
+            elif meaning_value in {"compress_to_essence", "ground_and_cite"}:
+                analytic_score += 0.12
 
         return "creative" if creative_score > analytic_score else "analytic"
 
@@ -333,6 +408,14 @@ class SimpleRouter:
         if cluster_bias == "creative":
             return 0.2 if "creative" in caps else -0.05
         return 0.0
+
+    def _meaning_behavior_bias(self, meaning: Optional[str], behavior: str) -> float:
+        if not meaning:
+            return 0.0
+        weights = MEANING_BEHAVIOR_WEIGHTS.get(meaning.lower())
+        if not weights:
+            return 0.0
+        return float(weights.get(behavior, 0.0))
 
     def _should_fallback(self, behavior: str, ctx: Context) -> Tuple[bool, Optional[str]]:
         reward, checks, ok_flag = self._extract_last_result(behavior, ctx)

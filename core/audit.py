@@ -33,9 +33,25 @@ def _timestamp() -> str:
 
 def log_run(event: Dict[str, Any], log_path: Path = RUN_LOG_PATH) -> None:
     payload = {"ts": _timestamp(), **event}
+    if "meaning" not in payload:
+        meaning = event.get("meaning")
+        if meaning is None:
+            data = event.get("data")
+            if isinstance(data, dict):
+                meaning = data.get("meaning")
+        if meaning:
+            payload["meaning"] = meaning
     _write_event(payload, log_path)
 
 
 def log_action(event: Dict[str, Any], log_path: Path = ACTION_LOG_PATH) -> None:
     payload = {"ts": _timestamp(), **event}
+    if "meaning" not in payload:
+        meaning = event.get("meaning")
+        if meaning is None:
+            data = event.get("data")
+            if isinstance(data, dict):
+                meaning = data.get("meaning")
+        if meaning:
+            payload["meaning"] = meaning
     _write_event(payload, log_path)

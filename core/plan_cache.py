@@ -78,10 +78,14 @@ class PlanCache:
         backend: str = "tfidf",
         verbosity: str = "normal",
         tags: Optional[Iterable[str]] = None,
+        meaning: Optional[str] = None,
     ) -> str:
         flags = ",".join(sorted({flag.lower() for flag in goal_flags}))
         tags_key = ",".join(sorted({str(tag).strip().lower() for tag in (tags or []) if str(tag).strip()}))
-        fingerprint = f"flags={flags}|backend={backend.lower()}|verbosity={verbosity.lower()}|tags={tags_key}"
+        meaning_key = (meaning or "").lower()
+        fingerprint = (
+            f"flags={flags}|backend={backend.lower()}|verbosity={verbosity.lower()}|tags={tags_key}|meaning={meaning_key}"
+        )
         return fingerprint
 
     def lookup(self, key: str) -> Optional[List[str]]:

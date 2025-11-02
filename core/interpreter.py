@@ -321,12 +321,20 @@ class Interpreter:
             "rationale": rationale,
             "_behavior": behavior,
         }
+        meaning_value = None
+        data = ctx.setdefault("data", {})
+        if isinstance(data, dict):
+            meaning_value = data.get("meaning")
+            if isinstance(meaning_value, str) and meaning_value:
+                entry["meaning"] = meaning_value
         if isinstance(router_state, dict):
             recent = router_state.setdefault("recent_results", {})
             if isinstance(recent, dict):
                 recent[behavior] = entry
+                recent["_last"] = entry
+                if meaning_value:
+                    router_state["meaning"] = meaning_value
 
-        data = ctx.setdefault("data", {})
         if isinstance(data, dict):
             rewards_map = data.setdefault("rewards", {})
             if isinstance(rewards_map, dict):

@@ -1,0 +1,13 @@
+name: meaning_infer
+preconditions:
+  - "true"
+effects:
+  - meaning_inferred
+capabilities:
+  - analytic
+cost: 0.5
+requires_explanation: true
+keywords:
+  - meaning
+  - intent
+  - infer
