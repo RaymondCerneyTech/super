@@ -183,6 +183,7 @@ def plan(
         verbosity=str(data.get("verbosity", "normal")),
         tags=tags,
         meaning=meaning_signature,
+        pipeline=code_pipeline,
     )
     if use_cache:
         cached_behaviors = cache.lookup(cache_key)
@@ -214,7 +215,17 @@ def plan(
             best = current
             break
 
+        pipeline_index_map: Dict[str, int] = {name: idx for idx, (name, _) in enumerate(code_pipeline)}
+        next_required_index = 0
+        while next_required_index < len(code_pipeline) and code_pipeline[next_required_index][1] in current["flags"]:
+            next_required_index += 1
+
         for behavior in registry.list():
+            if pipeline_index_map:
+                step_idx = pipeline_index_map.get(behavior)
+                if step_idx is not None and step_idx > next_required_index:
+                    continue
+
             meta = registry.meta(behavior)
             preconds = meta.get("preconditions", ["true"])
             if not evaluate_preconditions(preconds, current["ctx"], current["flags"]):
@@ -326,6 +337,40 @@ def plan(
             heapq.heappush(heap, (-utility, counter, new_state))
             if utility > best.get("utility", float("-inf")):
                 best = new_state
+
+    final_ctx = best.get("ctx") if isinstance(best.get("ctx"), dict) else initial_ctx
+    deep_loop_present = any(step for step in best.get("steps", []) if step[0] == "deep_loop")
+    if isinstance(final_ctx, dict):
+        data_layer = final_ctx.setdefault("data", {})
+        meaning_signal = data_layer.get("meaning")
+        use_deep_loop = data_layer.get("use_deep_loop")
+        if not best.get("goal_satisfied") and (
+            meaning_signal in {"plan_and_execute", "analyze_and_comment"} or use_deep_loop
+        ) and not deep_loop_present:
+            try:
+                deep_result = interpreter.execute("deep_loop", final_ctx)
+            except Exception:
+                deep_result = None
+            if deep_result:
+                rewards = ensure_reward_dict(deep_result.get("rewards"))
+                deep_step = (
+                    "deep_loop",
+                    {
+                        "rewards": rewards,
+                        "rationale": deep_result.get("rationale", {}),
+                        "effects": deep_result.get("effects", []),
+                    },
+                )
+                best_steps = list(best.get("steps", []))
+                best_steps.append(deep_step)
+                best["steps"] = best_steps
+                best_flags = set(best.get("flags", set()))
+                best["flags"] = best_flags.union(deep_result.get("effects", []))
+                deep_output = deep_result.get("output")
+                if isinstance(deep_output, dict):
+                    data_layer.setdefault("deep_loop_output", deep_output)
+                best["ctx"] = final_ctx
+                best.setdefault("fallbacks", []).append("deep_loop")
 
     best["goal_satisfied"] = bool(goal_set and goal_set.issubset(best["flags"])) if goal_set else True
     best["expansions"] = expansions
@@ -478,10 +523,20 @@ def _code_pipeline_bonus(
             next_index = idx + 1
 
     bonus = 0.0
+    current_behavior = behaviors[0] if behaviors else None
+
     if next_index < len(pipeline):
         next_behavior, next_flag = pipeline[next_index]
-        if next_flag in produced_effects or next_behavior in behaviors:
-            bonus += 0.18
+        if current_behavior == next_behavior or next_flag in produced_effects:
+            bonus += 0.35
+
+    if current_behavior:
+        for idx, (behavior, _) in enumerate(pipeline):
+            if behavior != current_behavior:
+                continue
+            if idx > next_index:
+                bonus -= 0.45 * (idx - next_index)
+            break
 
     for idx, (behavior, flag) in enumerate(pipeline):
         if idx <= next_index:
@@ -490,6 +545,6 @@ def _code_pipeline_bonus(
             bonus -= 0.12
 
     if all(flag in completed for _, flag in pipeline):
-        bonus += 0.1
+        bonus += 0.12
 
-    return max(-0.25, min(bonus, 0.35))
+    return max(-0.4, min(bonus, 0.5))

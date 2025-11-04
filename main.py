@@ -16,6 +16,7 @@ from core.registry import BehaviorRegistry
 from core.rewards import ensure_reward_dict
 from core.router import SimpleRouter
 from core.logs import append_jsonl
+from tools.registry import TOOLS as TOOL_REGISTRY
 
 _HELP_TEXT = dedent(
     """
@@ -102,6 +103,7 @@ def _ensure_data(ctx: Context) -> Dict[str, Any]:
     if not isinstance(data, dict):
         data = {}
         ctx["data"] = data
+    data.setdefault("tools_registry", TOOL_REGISTRY)
     return cast(Dict[str, Any], data)
 
 

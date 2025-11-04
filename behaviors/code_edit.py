@@ -37,7 +37,10 @@ class CodeEdit(Behavior):
                 return result
             # fallback to placeholder if endpoint generation fails
 
-        if "fix import" in lowered or "fix imports" in lowered:
+        wants_import_fix = bool(
+            re.search(r"\b(fix|clean|tidy|organize|update)(?:\s+\w+){0,3}\s+imports?\b", lowered)
+        )
+        if wants_import_fix:
             source = str(source_code)
             updated_code, info = _fix_imports(source)
             if not info["changed"]:

@@ -79,12 +79,19 @@ class PlanCache:
         verbosity: str = "normal",
         tags: Optional[Iterable[str]] = None,
         meaning: Optional[str] = None,
+        pipeline: Optional[Iterable[Tuple[str, str]]] = None,
     ) -> str:
         flags = ",".join(sorted({flag.lower() for flag in goal_flags}))
         tags_key = ",".join(sorted({str(tag).strip().lower() for tag in (tags or []) if str(tag).strip()}))
         meaning_key = (meaning or "").lower()
+        pipeline_key = ""
+        if pipeline:
+            pipeline_key = ";".join(
+                f"{name.lower()}->{effect.lower()}" for name, effect in pipeline if name and effect
+            )
         fingerprint = (
-            f"flags={flags}|backend={backend.lower()}|verbosity={verbosity.lower()}|tags={tags_key}|meaning={meaning_key}"
+            f"flags={flags}|backend={backend.lower()}|verbosity={verbosity.lower()}|tags={tags_key}|"
+            f"meaning={meaning_key}|pipeline={pipeline_key}"
         )
         return fingerprint
 

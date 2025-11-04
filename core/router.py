@@ -62,6 +62,7 @@ def extract_features(goal_text: str, text: str, data: Optional[Dict[str, Any]] =
     k_passages = 12
     max_chars = 12000
     meaning_value = None
+    deep_loop_used = 0.0
     if isinstance(data, dict):
         k_passages = int(data.get("k_passages") or k_passages)
         max_chars = int(data.get("max_chars") or max_chars)
@@ -72,6 +73,8 @@ def extract_features(goal_text: str, text: str, data: Optional[Dict[str, Any]] =
         raw_meaning = data.get("meaning")
         if isinstance(raw_meaning, str):
             meaning_value = raw_meaning.lower()
+        if data.get("deep_loop_used"):
+            deep_loop_used = 1.0
 
     k_norm = min(1.0, k_passages / 20.0)
     chars_norm = min(1.0, max_chars / 20000.0)
@@ -91,6 +94,7 @@ def extract_features(goal_text: str, text: str, data: Optional[Dict[str, Any]] =
         wants_fresh,
         k_norm,
         chars_norm,
+        deep_loop_used,
     ]
 
     meaning_vector = [0.0] * len(MEANING_OPTIONS)
@@ -233,6 +237,7 @@ class SimpleRouter:
             router_state["bandit_disabled"] = bool(router_state.get("no_bandit", False))
             if meaning_value:
                 router_state["meaning"] = meaning_value
+            router_state["deep_loop_used"] = bool(data.get("deep_loop_used")) if isinstance(data, dict) else False
         use_bandit = isinstance(router_state, dict) and not router_state.get("no_bandit", False)
         if use_bandit:
             arm = self._bandit.select(features)

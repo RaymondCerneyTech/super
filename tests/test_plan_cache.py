@@ -39,7 +39,13 @@ def test_plan_cache_reuse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     result_first = plan(goal_flags, ctx, registry, interpreter, cluster_bias="analytic", max_expansions=10)
     assert result_first["steps"]
     shared_plan_cache_instance = shared_plan_cache()
-    first_key = shared_plan_cache_instance.build_key(goal_flags, backend="tfidf", verbosity="normal")
+    meaning = result_first.get("ctx", {}).get("data", {}).get("meaning")
+    first_key = shared_plan_cache_instance.build_key(
+        goal_flags,
+        backend="tfidf",
+        verbosity="normal",
+        meaning=meaning,
+    )
     assert shared_plan_cache_instance.lookup(first_key) is not None
 
     with patch("core.planner.shared_plan_cache", return_value=shared_plan_cache_instance):

@@ -5,7 +5,7 @@ import pytest
 
 import main
 from core.registry import BehaviorRegistry
-from core.router import SimpleRouter, extract_features
+from core.router import MEANING_OPTIONS, SimpleRouter, extract_features
 
 
 def test_extract_features_stable() -> None:
@@ -14,7 +14,8 @@ def test_extract_features_stable() -> None:
     features = extract_features(goal, text)
     repeat = extract_features(goal, text)
     assert features == repeat
-    assert len(features) == 14
+    expected_length = 15 + len(MEANING_OPTIONS)
+    assert len(features) == expected_length
     assert features[0] == 1.0  # bias term
 
 

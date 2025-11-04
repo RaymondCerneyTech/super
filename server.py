@@ -17,6 +17,7 @@ from core.config import load_config
 from core.planner import normalise_goal_flags, plan
 from core.rewards import ensure_reward_dict
 from main import build_runtime
+from tools.registry import TOOLS as TOOL_REGISTRY
 
 app = FastAPI(title="Super AI Server")
 
@@ -156,6 +157,7 @@ def api_ask(req: AskRequest) -> AskResponse:
         },
         "router": {"goal_text": goal_str, "no_bandit": no_bandit},
     }
+    ctx["data"].setdefault("tools_registry", TOOL_REGISTRY)
     if max_words:
         ctx["data"]["max_words"] = max_words
     if fresh_days:
@@ -174,10 +176,11 @@ def api_ask(req: AskRequest) -> AskResponse:
     )
 
     steps = plan_result.get("steps", [])
+    action_steps = [step for step in steps if step[0] != "meaning_infer"]
     final_ctx = plan_result.get("ctx", ctx)
     final_data = final_ctx.get("data", {})
 
-    if not steps:
+    if not action_steps:
         fallback_ctx = copy.deepcopy(ctx)
         summary_result = interpreter.execute("summarize", fallback_ctx)
         if not summary_result.get("ok"):
@@ -205,7 +208,13 @@ def api_ask(req: AskRequest) -> AskResponse:
         )
 
     final_rewards = ensure_reward_dict(steps[-1][1].get("rewards", {}))
-    answer = final_data.get("answer", "")
+    answer = final_data.get("answer") or final_data.get("summary") or final_data.get("aggregated_text") or ""
+    if not answer:
+        remaining = plan_result.get("remaining_flags") or goal_flags
+        raise HTTPException(
+            status_code=404,
+            detail=f"No plan output produced. Remaining goals: {', '.join(remaining)}",
+        )
     sources = [src.get("source", src) for src in final_data.get("sources", []) if src]
 
     return AskResponse(
@@ -234,6 +243,7 @@ def api_plan(req: PlanRequest) -> PlanResponse:
             "no_bandit": bool(req.no_bandit or plan_cfg.get("no_bandit", False)),
         },
     }
+    ctx["data"].setdefault("tools_registry", TOOL_REGISTRY)
     if req.text:
         ctx["data"]["text"] = req.text
     if req.policies:
@@ -253,7 +263,8 @@ def api_plan(req: PlanRequest) -> PlanResponse:
     )
 
     steps = plan_result.get("steps", [])
-    if not steps:
+    action_steps = [step for step in steps if step[0] != "meaning_infer"]
+    if not action_steps:
         remaining = plan_result.get("remaining_flags") or goal_flags
         raise HTTPException(
             status_code=404,
@@ -262,6 +273,16 @@ def api_plan(req: PlanRequest) -> PlanResponse:
 
     final_ctx = plan_result.get("ctx", ctx)
     final_rewards = ensure_reward_dict(steps[-1][1].get("rewards", {}))
+    if not req.text:
+        final_data = final_ctx.get("data", {})
+        summary_text = final_data.get("summary")
+        meaningful_steps = [step for step in action_steps if step[0] != "summarize"]
+        if not meaningful_steps and not (summary_text and summary_text.strip()):
+            remaining = plan_result.get("remaining_flags") or goal_flags
+            raise HTTPException(
+                status_code=404,
+                detail=f"No plan found. Remaining goals: {', '.join(remaining)}",
+            )
 
     return PlanResponse(
         plan=_build_plan_steps(steps),

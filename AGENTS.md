@@ -3,40 +3,52 @@
 ## Orchestration Layers
 
 * **Entrypoints**
-
-  * `main.py` — CLI hub for `summarize`, `format`, `optimize`, `check`, `ingest`, `ask`, `plan`, and the automation-focused `do` command.
-  * `server.py` — FastAPI wrapper that exposes `/ask` and `/plan` HTTP endpoints around the planner/runtime stack.
+  * `main.py` — CLI hub for `summarize`, `format`, `optimize`, `check`, `ingest`, `ask`, `plan`, and automation-focused `do` tasks.
+  * `server.py` — FastAPI wrapper exposing `/ask` and `/plan` HTTP endpoints on top of the planner/runtime stack.
 
 * **Planner Layer**
-
-  * `core/planner.py` — best-first / GOAP-style planner with goal-flag utility shaping and command-parse sub-step execution.
-  * `core/plans.py` — static / YAML- or JSON-driven plans that feed behaviors through the interpreter.
-  * `core/plan_cache.py` — persistent cache keyed by goal flags, backend, verbosity, and tags.
+  * `core/planner.py` — best-first / GOAP-style planner with goal-flag utility shaping, deep-loop fallback, and code-edit pipeline scoring.
+  * `core/plans.py` — static YAML/JSON plan templates consumed by the interpreter.
+  * `core/plan_cache.py` — persistent cache keyed by goal flags, backend, verbosity, tags, and meaning.
+  * `planners/registry.py` — registry for First-Principles, analogy, causal, ReAct, and Tree-of-Thought planners via `run_planner(name, ctx)`.
 
 * **Router & Bandit Layer**
-
-  * `core/router.py` — LinUCB contextual bandit, feature extractor, and fallback logic for analytic/creative clusters.
+  * `core/router.py` — LinUCB contextual bandit, feature extractor, and fallback logic across analytic/creative clusters (meaning-aware).
   * `core/learn.py` — adapter/bias learner for historical reward shaping.
   * `core/rewards.py` — aggregation helpers (overall, citation coverage, faithfulness, verbosity) shared across layers.
-  * `tools/analyze_bandit.py` — offline analyzer for JSONL bandit logs (moving averages, per-cluster stats).
+  * `tools/analyze_bandit.py` — offline analyzer for JSONL bandit logs (moving averages, per-cluster statistics).
 
 * **Runtime Layer**
-
   * `core/interpreter.py` — executes behaviors, enforces preconditions, records rewards/checks.
   * `core/audit.py`, `core/logs.py` — JSONL logging helpers and audit sink for CLI/automation traces.
-  * `core/checks.py`, `core/features.py`, `core/sandbox.py` — reusable validation metrics, router features, and sandboxed FS operations.
+  * `core/memory.py`, `core/reflections.py`, `core/credit_ledger.py`, `core/checks.py`, `core/features.py`, `core/sandbox.py` — inner-loop working memory, reflections store, per-tool credit ledger, validation metrics, feature extractors, and sandboxed FS helpers.
 
 * **Behaviors**
-
   * Retrieval & knowledge: `behaviors/retrieve.py`, `behaviors/aggregate.py`, `behaviors/ingest_web.py`, `behaviors/report_from_data.py`.
   * Writing & editing: `behaviors/summarize.py`, `behaviors/answer_verbose.py`, `behaviors/document_formatting.py`, `behaviors/rewrite_style.py`.
   * Governance & analysis: `behaviors/policy_check.py`, `behaviors/grammar_correction.py`, `behaviors/sentiment_analysis.py`, `behaviors/social_post_optimize.py`.
-  * Automation primitives: `behaviors/files_read.py`, `behaviors/files_write.py`, `behaviors/command_parse.py`, plus associated `.meta.yaml` descriptors.
+  * Automation primitives: `behaviors/files_read.py`, `behaviors/files_write.py`, `behaviors/command_parse.py`, plus `.meta.yaml` descriptors.
+  * Planning orchestration: `behaviors/meta_pipeline.py` delegates to the meta-planner to emit 1–N candidate plans (ReAct / ToT / First-Principles blends).
+  * Tool-assisted reasoning: `behaviors/deep_loop.py` runs DeepAgent-style inner loops, calling `tools/registry.py` entries, honoring invariants, and logging to `.ai/ledger_tool_calls.jsonl`.
 
 ## Code Editing Behavior
+
 - `behaviors/refactor_code.py`: Refactors targeted functions into `async` stubs when requests call for async upgrades.
 - `behaviors/code_edit.py`: Orchestrates code-edit tasks, applying import fixes or delegating to specialized helpers based on the user prompt.
 - `behaviors/add_endpoint.py`: Generates FastAPI endpoint scaffolds (router + Pydantic models) for requests such as “add a user login endpoint.”
+- Code-generation runs append rich audit entries to `logs/codegen.jsonl` (request text, chosen branch, effects, previews) so pipelines can be replayed or analyzed later. Returned `logs` include `[codegen] action=… status=…` traces for each step.
+- `behaviors/deep_loop.py`: DeepAgent-style inner loop that samples tools from `tools/registry.py`, maintains working memory and episodic traces, updates tool credit, and records reflections when chains underperform.
+
+## Tool Power Pack
+
+- Web utilities (`tools/web.py`): `web_get`, `html_to_text`, `extract_links`, `extract_facts` (10 s timeout, 200 kB cap).
+- Data helpers (`tools/data_utils.py`): `table_detect`, `csv_summary`, `json_query`, `dedupe_lines`.
+- Math & units (`tools/math_units.py`): `math_eval_safe`, `unit_convert_basic`.
+- Planning aids (`tools/planning.py`): `causal_dot_builder`, `timeline_normalize`.
+- Memory & cache (`tools/memory_tools.py`): `reflection_add`, `reflection_get`, `cache_put`, `cache_get`.
+- Repo utilities (`tools/aci.py`): `grep_repo`, `read_file`, `write_file`, `append_file`, `run_pytest` (last 40 lines). Legacy aliases (`code_read`, `code_write`, `search_repo`, `run_tests`) remain available.
+- All tools register affordances in `tools/registry.py`. Cue defaults (`core/cues.py`) now map `web` → `["web_get","html_to_text","extract_facts","numbers_guard"]` and `data` → `["table_detect","csv_summary"]`.
+- Validation: `tests/test_tools_powerpack.py` exercises web, data, and repo flows (`python -m pytest tests/test_tools_powerpack.py -q`).
 
 ## Run & Setup Commands
 
@@ -66,115 +78,17 @@ python main.py --config super.yaml ask --question "Summarize our latest policy u
 python tools/analyze_bandit.py --log-file logs/bandit.jsonl --window 50
 ```
 
-## Meaning-first Routing (to add)
+## Meaning-first Routing (historical reference)
 
-This codebase already has a planner, a contextual router, and an interpreter. To make them choose the *right* behaviors for the user’s real intent, add a meaning-inference behavior and thread its output through planner → router → audit.
-
-### 1. Create the meaning behavior
-
-Create this file:
-
-**`behaviors/meaning_infer.py`**
-
-```python
-from core.interfaces import Behavior, Context, Result
-
-class MeaningInfer(Behavior):
-    name = "meaning_infer"
-    inputs = ["text"]
-    outputs = ["meaning"]
-
-    def run(self, ctx: Context) -> Result:
-        data = ctx.setdefault("data", {})
-        text = (data.get("text") or ctx.get("text") or "").lower()
-
-        if any(k in text for k in ["summarize", "summary", "shorten", "tl;dr"]):
-            meaning = "compress_to_essence"
-        elif any(k in text for k in ["rewrite", "tone", "style", "friendlier", "rn study"]):
-            meaning = "transform_style"
-        elif any(k in text for k in ["cite", "source", "grounded", "where did you get"]):
-            meaning = "ground_and_cite"
-        elif any(k in text for k in ["analyze", "audit", "check this"]):
-            meaning = "analyze_and_comment"
-        elif any(k in text for k in ["plan", "steps", "run this", "task"]):
-            meaning = "plan_and_execute"
-        else:
-            meaning = "compress_to_essence"
-
-        data["meaning"] = meaning
-        return Result.ok({"meaning": meaning}, effects=[f"meaning:{meaning}"])
-```
-
-Notes:
-
-* keep the same import style and base classes as your other behaviors
-* expose the meaning as both data and an effect so planners can match on it
-
-### 2. Planner must prefer meaning-matched behaviors
-
-Edit **`core/planner.py`** so that, after you assemble candidate behaviors and before final scoring, you read the meaning and give a small bonus to matching behaviors:
-
-```python
-meaning = ctx.get("data", {}).get("meaning")
-for beh in candidates:
-    score = compute_base_score(beh)
-    if meaning and any(meaning in e for e in beh.effects):
-        score += 0.2
-    # keep existing scoring and cache logic
-```
-
-### 3. Router/bandit must learn per meaning
-
-Edit **`core/router.py`** so the contextual bandit key includes meaning:
-
-```python
-features_key = extract_features(ctx)
-meaning = ctx.get("data", {}).get("meaning", "none")
-bandit_key = f"{features_key}::{meaning}"
-```
-
-Then pass `bandit_key` to whatever LinUCB / learn routine you already call. This lets the learner build separate stats for e.g. `long_text::compress_to_essence` vs `long_text::ground_and_cite`.
-
-### 4. Interpreter / audit must log meaning
-
-Edit **`core/interpreter.py`** and/or **`core/audit.py`** so log records include the meaning:
-
-```python
-record["meaning"] = ctx.get("data", {}).get("meaning")
-```
-
-This makes `tools/analyze_bandit.py` and future automations able to group by meaning.
-
-### 5. Test / verify
-
-Agents should try to run **at least one** of these after applying the edits:
-
-```bash
-python -m pytest
-# or, if tests are light:
-python main.py plan --goal "summary,formatted" --text "test text for meaning routing" --explain
-```
-
-If tests fail, show the diff for the planner/router/interpreter files.
-
----
-
-## Meaning-first (installed)
-
-The repository now already contains:
+The repository already contains:
 
 - `behaviors/meaning_infer.py`
-- planner/routing updates to read `ctx["data"]["meaning"]`
-- audit/interpreter logging of `"meaning"`
+- Planner/router/audit updates that propagate `ctx["data"]["meaning"]`
+- Cache keys and logs that include meaning
 
-When editing this repo in the future:
+When editing the repo in the future:
 
-1. **Do not recreate** `behaviors/meaning_infer.py` if it exists.
-2. **Do** re-check these files for consistency:
-   - `core/planner.py` — meaning bonus on behavior scoring
-   - `core/router.py` — bandit/context key includes meaning
-   - `core/interpreter.py` / `core/audit.py` — log meaning in JSONL
-   - `core/plan_cache.py` — cache key includes meaning
-3. Run:
-   ```bash
-   python main.py plan --goal "summary,formatted" --text "test" --explain
+1. **Do not recreate** `behaviors/meaning_infer.py`.
+2. **Check** `core/planner.py`, `core/router.py`, `core/interpreter.py`, `core/audit.py`, and `core/plan_cache.py` continue threading `data["meaning"]`.
+3. Run `python main.py plan --goal "summary,formatted" --text "test" --explain` (or `python -m pytest`) after meaning-related edits.
+

@@ -1,0 +1,13 @@
+name: meta_pipeline
+preconditions:
+  - "contains goal"
+effects:
+  - have_plan_candidates
+capabilities:
+  - analytic
+cost: 1.5
+requires_explanation: true
+keywords:
+  - meta
+  - planner
+  - candidates

@@ -1,0 +1,14 @@
+name: deep_loop
+preconditions:
+  - "text_len >= 0"
+effects:
+  - deep_loop_completed
+capabilities:
+  - analytic
+  - automation
+cost: 1.8
+requires_explanation: true
+keywords:
+  - loop
+  - tool
+  - planner

@@ -219,7 +219,8 @@ def test_planner_prefers_summary_then_rewrite(registry: BehaviorRegistry) -> Non
     flags = normalise_goal_flags("summary,rewrite")
     result = plan(flags, ctx, registry, interpreter, cluster_bias="analytic", max_expansions=10)
     steps = [behavior for behavior, _ in result["steps"]]
-    assert steps[:2] == ["summarize", "rewrite_style"]
+    core_steps = [behavior for behavior in steps if behavior != "meaning_infer"]
+    assert core_steps[:2] == ["summarize", "rewrite_style"]
 
 
 def test_planner_handles_performance_flags(registry: BehaviorRegistry) -> None:
@@ -360,7 +361,7 @@ def test_empty_input_handled(interpreter: Interpreter, registry: BehaviorRegistr
     chosen = router.choose(ctx)
     captured = capsys.readouterr().out
 
-    assert chosen in {"rewrite_style", "summarize", "grammar_correction", "document_formatting"}
+    assert chosen in {"rewrite_style", "summarize", "grammar_correction", "document_formatting", "command_parse"}
     assert "[router] fallback" not in captured
 
 
