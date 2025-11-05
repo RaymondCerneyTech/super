@@ -168,6 +168,25 @@ All tools are registered with affordances in `tools/registry.py`, so behaviors a
 
 Smoke tests live in `tests/test_tools_powerpack.py`; run `python -m pytest tests/test_tools_powerpack.py -q` to confirm the tool pack is wired correctly.
 
+Local LLM Selection
+-------------------
+
+Set `SUPER_MODELS_ROOT` to the directory that holds your checkpoints (for example `C:\AI\models`). The CLI can then list, select, and display the active model:
+
+```
+python main.py models --list
+python main.py models --select 2
+python main.py models --show
+python main.py llama --prompt "Write a haiku" --n-predict 80
+python main.py llama --profile poem --var topic=tools
+```
+
+Selections are stored in `.ai/models_state.json`, so subsequent runs reuse the chosen model.
+
+Prompt and sampling presets live in `config/llama_profiles.yaml`. Edit that file (or point `SUPER_LLAMA_PROFILES` at your own) to create reusable profiles. Each profile can declare a template, default model, and llama.cpp flags; use `python main.py llama --list-profiles` to inspect what’s available.
+
+The same functionality is exposed to planners via the `llama_generate` behavior, which accepts `data["llama"] = {"profile": "poem", "vars": {"topic": "tools"}}` and writes the response to `data["llama_output"]`. That means you can build plans such as `retrieve → llama_generate(profile=poem) → document_formatting` without hand wiring the llama.cpp flags each time.
+
 Why Super AI Instead of ChatGPT
 --------------------------------
 - Deterministic workflow orchestration: you design the pipeline (retrieve  check  format  verify) and each step is logged and auditable.

@@ -1,0 +1,58 @@
+default_model: ""
+profiles:
+  poem:
+    description: "Generate a short two-line poem."
+    prompt: "Write a two line poem about {topic}."
+    n_predict: 60
+    temperature: 0.7
+    extra:
+      - --simple-io
+      - --no-warmup
+      - -no-cnv
+      - --top-k
+      - "40"
+      - --top-p
+      - "0.9"
+      - --repeat-penalty
+      - "1.1"
+  math_solver:
+    description: "Step-by-step math reasoning."
+    prompt: |
+      Solve the following problem. Provide numbered steps with concise explanations.
+      Do not stop until you have completed all steps.
+      After listing the steps, output exactly one line that begins with "Final answer: "
+      followed by the explicit expression for y(x), then append the token END.
+      Do not repeat the instructions, the problem statement, or the steps after the final answer.
+
+      Problem: {problem}
+    n_predict: 320
+    temperature: 0.0
+    extra:
+      - --simple-io
+      - --no-warmup
+      - -no-cnv
+      - --repeat-penalty
+      - "1.08"
+      - --top-k
+      - "30"
+      - --top-p
+      - "0.88"
+  research_plan:
+    description: "Outline strategies and obstacles for complex research topics."
+    prompt: |
+      Draft a research memo addressing the topic below.
+      Include four sections:
+      1. Current understanding (with key results and references).
+      2. Promising approaches or heuristics.
+      3. Major obstacles or failure modes.
+      4. Recommended next steps (experiments, collaborations, resources).
+
+      Topic: {topic}
+    n_predict: 320
+    temperature: 0.2
+    extra:
+      - --simple-io
+      - --no-warmup
+      - -no-cnv
+      - --repeat-penalty
+      - "1.05"

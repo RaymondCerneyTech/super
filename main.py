@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from core.audit import log_run
 from core.config import load_config
+from core import llama_profiles
+from core import models as model_store
 from core.interfaces import Context
 from core.interpreter import Interpreter
 from core.planner import normalise_goal_flags, plan
@@ -16,6 +18,7 @@ from core.registry import BehaviorRegistry
 from core.rewards import ensure_reward_dict
 from core.router import SimpleRouter
 from core.logs import append_jsonl
+from tools import llama_runner
 from tools.registry import TOOLS as TOOL_REGISTRY
 
 _HELP_TEXT = dedent(
@@ -52,6 +55,17 @@ _HELP_TEXT = dedent(
       plan --goal \"summary,compliant,formatted\" [--text TEXT] [--policies \"phrase1,...\"] [--log-file PATH] [--no-bandit] [--explain] [--max-expansions N]
           Construct a behaviour plan to satisfy goal flags. Example:
             python main.py plan --goal \"summary,compliant,formatted\" --text \"Draft...\" --log-file logs/bandit.jsonl --explain
+
+      models [--list] [--show] [--select N] [--select-name NAME]
+          Inspect or choose local LLM models discovered via SUPER_MODELS_ROOT. Examples:
+            python main.py models --list
+            python main.py models --select 2
+            python main.py models --select-name llama-3-8b.gguf
+
+      llama --prompt "..." [--model NAME_OR_PATH] [--n-predict N] [--temperature VAL] [--extra ARG ...]
+          Run inference through llama.cpp using the active or specified model. Examples:
+            python main.py llama --prompt "Hello" --n-predict 64
+            python main.py llama --prompt "Summarize this" --model alpha.gguf --temperature 0.7
     """
 ).strip()
 
@@ -430,6 +444,59 @@ def command_plan(args: argparse.Namespace) -> None:
     if policies:
         data["policies"] = policies
 
+    llama_payload: Dict[str, Any] = {}
+    config_llama = config.get("llama")
+    if isinstance(config_llama, dict):
+        llama_payload.update({key: value for key, value in config_llama.items()})
+    existing_llama = data.get("llama")
+    if isinstance(existing_llama, dict):
+        llama_payload.update(existing_llama)
+
+    llama_profile = _optional_str(getattr(args, "llama_profile", None))
+    if not llama_profile:
+        llama_profile = _optional_str(config.get("llama_profile"))
+
+    llama_vars: Dict[str, str] = {}
+    config_llama_vars = config.get("llama_vars")
+    if isinstance(config_llama_vars, dict):
+        llama_vars.update({str(key): str(value) for key, value in config_llama_vars.items()})
+    elif isinstance(config_llama_vars, list):
+        llama_vars.update(_parse_profile_vars([str(item) for item in config_llama_vars]))
+    elif isinstance(config_llama_vars, str):
+        llama_vars.update(_parse_profile_vars([config_llama_vars]))
+
+    config_llama_var = config.get("llama_var")
+    if isinstance(config_llama_var, list):
+        llama_vars.update(_parse_profile_vars([str(item) for item in config_llama_var]))
+    elif isinstance(config_llama_var, str):
+        llama_vars.update(_parse_profile_vars([config_llama_var]))
+
+    cli_llama_vars = _parse_profile_vars(getattr(args, "llama_var", None))
+    if cli_llama_vars:
+        llama_vars.update(cli_llama_vars)
+
+    if llama_profile:
+        llama_payload["profile"] = llama_profile
+
+    if llama_vars:
+        existing_vars = llama_payload.get("vars")
+        merged_vars: Dict[str, str] = {}
+        if isinstance(existing_vars, dict):
+            merged_vars.update({str(key): str(value) for key, value in existing_vars.items()})
+        merged_vars.update(llama_vars)
+        llama_payload["vars"] = merged_vars
+
+    if llama_payload:
+        data["llama"] = llama_payload
+        profile_value = llama_payload.get("profile")
+        if isinstance(profile_value, str):
+            profile_clean = profile_value.strip()
+            if profile_clean:
+                data["llama_profile"] = profile_clean
+        vars_value = llama_payload.get("vars")
+        if isinstance(vars_value, dict):
+            data["llama_vars"] = {str(key): str(value) for key, value in vars_value.items()}
+
     plan_result = plan(
         goal_flags,
         ctx,
@@ -568,6 +635,157 @@ def command_do(args: argparse.Namespace) -> None:
     print(f"Completed run. Run ID: {run_id}")
 
 
+def _resolve_llama_model(model_arg: Optional[str]) -> Path:
+    return model_store.resolve_model_path(model_arg)
+
+
+def command_models(args: argparse.Namespace) -> None:
+    root = model_store.model_root().resolve()
+    selection_performed = False
+
+    try:
+        if args.select is not None:
+            selected_path = model_store.select_model_by_index(args.select)
+            print(f"Selected model #{args.select}: {selected_path}")
+            selection_performed = True
+        if args.select_name:
+            selected_path = model_store.select_model_by_name(args.select_name)
+            print(f"Selected model '{args.select_name}': {selected_path}")
+            selection_performed = True
+    except (FileNotFoundError, IndexError) as exc:
+        print(f"Error: {exc}")
+        return
+
+    if args.show or selection_performed:
+        active = model_store.get_active_model()
+        if active:
+            print(f"Active model: {active}")
+        else:
+            print("Active model: (not set)")
+
+    no_flags = not any(
+        [
+            args.list,
+            args.show,
+            args.select is not None,
+            bool(args.select_name),
+        ]
+    )
+    if args.list or no_flags:
+        models = model_store.list_models()
+        print(f"Model root: {root}")
+        if not models:
+            print("No models found. Set SUPER_MODELS_ROOT or add model files.")
+            return
+        active = model_store.get_active_model()
+        active_resolved = active.resolve() if active else None
+        for idx, path in enumerate(models, start=1):
+            marker = "*" if active_resolved and path.resolve() == active_resolved else " "
+            print(f"[{idx:2d}] {marker} {path.name}")
+
+
+def _parse_profile_vars(items: Optional[List[str]]) -> Dict[str, str]:
+    variables: Dict[str, str] = {}
+    if not items:
+        return variables
+    for item in items:
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        variables[key] = value
+    return variables
+
+
+def command_llama(args: argparse.Namespace) -> None:
+    if getattr(args, "list_profiles", False):
+        profiles = llama_profiles.list_profiles()
+        if not profiles:
+            print("No llama profiles configured.")
+            return
+        print("Available llama profiles:")
+        for name, description in profiles:
+            suffix = f" - {description}" if description else ""
+            print(f"  {name}{suffix}")
+        return
+
+    variables = _parse_profile_vars(getattr(args, "var", None))
+    profile_settings: Optional[Dict[str, object]] = None
+    if getattr(args, "profile", None):
+        try:
+            profile_settings = llama_profiles.resolve_profile(args.profile, variables)
+        except KeyError as exc:
+            print(f"Error: {exc}")
+            return
+
+    prompt = args.prompt or ""
+    if not prompt and args.prompt_file:
+        prompt = Path(args.prompt_file).read_text(encoding="utf-8")
+    if not prompt and profile_settings:
+        prompt = str(profile_settings.get("prompt", "") or "")
+    if prompt and variables and not profile_settings:
+        prompt = llama_profiles.render_template(prompt, variables)
+    if not prompt:
+        print("Error: provide --prompt/--prompt-file or use a profile with a prompt.")
+        return
+
+    model_arg: Optional[str] = args.model
+    if not model_arg and profile_settings:
+        model_value = profile_settings.get("model")
+        if isinstance(model_value, str):
+            model_arg = model_value
+    try:
+        model_path = _resolve_llama_model(model_arg)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}")
+        return
+
+    n_predict = args.n_predict
+    if n_predict is None and profile_settings:
+        value = profile_settings.get("n_predict")
+        if isinstance(value, int):
+            n_predict = value
+    temperature = args.temperature
+    if temperature is None and profile_settings:
+        value = profile_settings.get("temperature")
+        if isinstance(value, (int, float)):
+            temperature = float(value)
+
+    extra_args: List[str] = []
+    if profile_settings:
+        extras = profile_settings.get("extra")
+        if isinstance(extras, list):
+            extra_args.extend(str(item) for item in extras)
+    extra_args.extend(args.extra or [])
+
+    try:
+        result = llama_runner.run_inference(
+            prompt=prompt,
+            model=model_path,
+            n_predict=n_predict,
+            temperature=temperature,
+            extra_args=extra_args,
+        )
+    except llama_runner.LlamaBinaryNotFound as exc:
+        print(f"Error: {exc}")
+        return
+
+    if result["returncode"] != "0":
+        print(f"llama exited with status {result['returncode']}")
+        if result["stderr"]:
+            print(result["stderr"])
+        return
+
+    if args.profile:
+        print(f"Profile: {args.profile}")
+    print(f"Command: {result['command']}")
+    if result["stderr"]:
+        print("stderr:\n" + result["stderr"])
+    print("Output:\n" + result["stdout"])
+
+
 def _parse_permits(value: Optional[str]) -> set[str]:
     perms: set[str] = set()
     if not value:
@@ -655,7 +873,34 @@ def build_parser() -> argparse.ArgumentParser:
     plan_parser.add_argument("--no-bandit", action="store_true", help="Disable LinUCB routing bias")
     plan_parser.add_argument("--max-expansions", type=int)
     plan_parser.add_argument("--explain", action="store_true")
+    plan_parser.add_argument("--llama-profile", help="Apply this llama profile when planning llama_generate steps")
+    plan_parser.add_argument("--llama-var", action="append", metavar="KEY=VALUE", help="Template variable for llama profile (repeatable)")
     plan_parser.set_defaults(func=command_plan)
+
+    models_parser = subparsers.add_parser("models", help="Manage local LLM models")
+    models_parser.add_argument("--list", action="store_true", help="List models discovered under SUPER_MODELS_ROOT")
+    models_parser.add_argument("--show", action="store_true", help="Show the currently active model")
+    models_parser.add_argument("--select", type=int, help="Select model by 1-based index from the list")
+    models_parser.add_argument("--select-name", help="Select model by exact or partial name")
+    models_parser.set_defaults(func=command_models)
+
+    llama_parser = subparsers.add_parser("llama", help="Run inference using llama.cpp")
+    llama_prompt_group = llama_parser.add_mutually_exclusive_group(required=False)
+    llama_prompt_group.add_argument("--prompt", help="Prompt text to send to the model")
+    llama_prompt_group.add_argument("--prompt-file", help="Path to a file containing the prompt")
+    llama_parser.add_argument("--model", help="Model name (from models list) or direct path")
+    llama_parser.add_argument("--profile", help="Use a named llama profile")
+    llama_parser.add_argument("--list-profiles", action="store_true", help="List available llama profiles and exit")
+    llama_parser.add_argument("--var", action="append", metavar="KEY=VALUE", help="Template variable for the profile (repeatable)")
+    llama_parser.add_argument("--n-predict", type=int, help="Number of tokens to generate")
+    llama_parser.add_argument("--temperature", type=float, help="Sampling temperature")
+    llama_parser.add_argument(
+        "--extra",
+        action="append",
+        default=[],
+        help="Additional argument forwarded to llama.cpp (repeat for each flag, e.g. --extra --simple-io)",
+    )
+    llama_parser.set_defaults(func=command_llama)
 
     do_parser = subparsers.add_parser("do", help="Run automation commands via behaviors")
     do_parser.add_argument("--task", required=True, help="Natural-language automation instruction")

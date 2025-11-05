@@ -30,6 +30,7 @@
   * Automation primitives: `behaviors/files_read.py`, `behaviors/files_write.py`, `behaviors/command_parse.py`, plus `.meta.yaml` descriptors.
   * Planning orchestration: `behaviors/meta_pipeline.py` delegates to the meta-planner to emit 1–N candidate plans (ReAct / ToT / First-Principles blends).
   * Tool-assisted reasoning: `behaviors/deep_loop.py` runs DeepAgent-style inner loops, calling `tools/registry.py` entries, honoring invariants, and logging to `.ai/ledger_tool_calls.jsonl`.
+  * LLM generation: `behaviors/llama_generate.py` wraps llama.cpp invocations with profile support so planners or deep loops can request completions directly.
 
 ## Code Editing Behavior
 

@@ -1,1 +1,10 @@
-{"flags=have_summary|backend=tfidf|verbosity=normal|tags=|meaning=compress_to_essence|pipeline=": {"behaviors": ["meaning_infer", "summarize"], "created_ts": 1762274680.5326898}}
+{
+  "flags=have_summary|backend=tfidf|verbosity=normal|tags=|meaning=compress_to_essence|pipeline=": {
+    "behaviors": ["meaning_infer", "summarize"],
+    "created_ts": 1762285484.2026668
+  },
+  "flags=formatted,llm_output|backend=tfidf|verbosity=normal|tags=|meaning=analyze_and_comment|pipeline=": {
+    "behaviors": ["meaning_infer", "retrieve", "llama_generate", "document_formatting"],
+    "created_ts": 1762291751.9953432
+  }
+}

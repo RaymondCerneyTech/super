@@ -1,0 +1,10 @@
+name: llama_generate
+description: Run llama.cpp with optional profile and write the generated text to context data.
+inputs: []
+outputs: [llama_output]
+preconditions:
+  - "true"
+effects: [llm_output]
+cost: 1.5
+capabilities: [creative, analytic]
+requires_explanation: false
