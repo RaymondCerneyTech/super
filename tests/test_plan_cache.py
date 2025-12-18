@@ -14,7 +14,7 @@ from core.interpreter import Interpreter
 def test_plan_cache_basic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SUPER_PLAN_CACHE_PATH", str(tmp_path / "plans.json"))
     cache = PlanCache()
-    key = cache.build_key(["cited", "verbose"], backend="tfidf", verbosity="verbose")
+    key = cache.build_key(["cited", "verbose"], backend="hnsw", verbosity="verbose")
     assert cache.lookup(key) is None
     cache.store(key, [("retrieve", {}), ("answer_verbose", {})])
     restored = cache.lookup(key)
@@ -42,7 +42,7 @@ def test_plan_cache_reuse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     meaning = result_first.get("ctx", {}).get("data", {}).get("meaning")
     first_key = shared_plan_cache_instance.build_key(
         goal_flags,
-        backend="tfidf",
+        backend="hnsw",
         verbosity="normal",
         meaning=meaning,
     )

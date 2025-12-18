@@ -75,7 +75,7 @@ class PlanCache:
         self,
         goal_flags: Iterable[str],
         *,
-        backend: str = "tfidf",
+        backend: str = "hnsw",
         verbosity: str = "normal",
         tags: Optional[Iterable[str]] = None,
         meaning: Optional[str] = None,

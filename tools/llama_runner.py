@@ -67,14 +67,28 @@ def run_inference(
     env: Optional[Dict[str, str]] = None,
 ) -> Dict[str, str]:
     binary = find_llama_binary()
-    args = [str(binary), "--model", str(model)]
-    if n_predict is not None:
+    binary_name = binary.name.lower()
+    uses_positional_model = "llama-run" in binary_name
+    args = [str(binary)]
+    if n_predict is not None and not uses_positional_model:
         args.extend(["--n-predict", str(n_predict)])
     if temperature is not None:
         args.extend(["--temp", str(temperature)])
-    args.extend(["--prompt", prompt])
-    if extra_args:
-        args.extend(extra_args)
+
+    filtered_extra_args = extra_args
+    if uses_positional_model and extra_args:
+        skip = {"--simple-io", "--no-warmup", "-no-cnv"}
+        filtered_extra_args = [arg for arg in extra_args if arg not in skip]
+
+    if filtered_extra_args:
+        args.extend(filtered_extra_args)
+
+    if uses_positional_model:
+        args.append(str(model))
+        if prompt:
+            args.append(prompt)
+    else:
+        args.extend(["--model", str(model), "--prompt", prompt])
 
     proc_env = None
     if env:

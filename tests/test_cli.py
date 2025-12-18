@@ -213,7 +213,7 @@ def test_cli_plan_injects_llama_payload(monkeypatch, capsys):
 
 
 def test_cli_plan_research_profile_blueprint(monkeypatch, tmp_path, capsys):
-    key = "flags=formatted,llm_output|backend=tfidf|verbosity=normal|tags=|meaning=analyze_and_comment|pipeline="
+    key = "flags=formatted,llm_output|backend=hnsw|verbosity=normal|tags=|meaning=analyze_and_comment|pipeline="
     blueprint_payload = {
         key: {
             "behaviors": ["meaning_infer", "retrieve", "llama_generate", "document_formatting"],

@@ -1,0 +1,13 @@
+Plan: meaning_infer -> retrieve -> aggregate -> mpc_plan -> llama_generate -> log_rollouts -> document_formatting -> log_rollouts -> policy_check
+Final reward:
+{
+  "manageable": 0.0,
+  "preservation": 1.0,
+  "overall": 0.7256944444444444,
+  "fluency": 0.85,
+  "creativity": 0.0,
+  "relevance": 1.0,
+  "explanation_presence": 1.0,
+  "explanation_specificity": 0.3333333333333333,
+  "explanation_alignment": 1.0
+}

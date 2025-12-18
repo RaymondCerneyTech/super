@@ -1,1 +1,1 @@
-{"flags=formatted,llm_output|backend=tfidf|verbosity=normal|tags=|meaning=ground_and_cite|pipeline=": {"behaviors": ["meaning_infer", "document_formatting", "policy_check", "llama_generate"], "created_ts": 1762399830.3539126}}
+{"flags=have_summary|backend=hnsw|verbosity=normal|tags=|meaning=compress_to_essence|pipeline=": {"behaviors": ["meaning_infer", "summarize"], "created_ts": 1763531606.6420429}}

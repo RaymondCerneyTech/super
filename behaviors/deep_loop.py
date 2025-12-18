@@ -8,8 +8,10 @@ from core.cues import PIPELINES, select_cue
 from core.credit_ledger import record as ledger_record
 from core.interfaces import Behavior, Context, Result
 from core.memory import EpisodicStore, ToolMemory, WorkingMemory
-from core.reflections import add_reflection, fingerprint, get_reflections
 from core.meta_planner import record_outcome, build_features
+from core.reflections import add_reflection, fingerprint, get_reflections
+from core.rewards import json_schema_ok, math_exact, similarity_step, unit_tests_pass
+from core.srl_trace import append_trace as log_srl_trace
 from judges.meta_judge import aggregate, rule_judge
 
 CALL_SITE = "behaviors.deep_loop"
@@ -58,6 +60,10 @@ class DeepLoop(Behavior):
         need_tool = bool(data.get("need_tool"))
         progress_observed = False
         total_quality_gain = 0.0
+        expert_trajectory = data.get("expert_trajectory")
+        if not isinstance(expert_trajectory, list):
+            expert_trajectory = None
+        verifier_name = str(data.get("verifier") or "").strip().lower()
 
         for step_index in range(max_iters):
             if working.done():
@@ -103,6 +109,13 @@ class DeepLoop(Behavior):
             working.apply(step_result["output"])
             episodic.append(step_result["step"], step_result["output"], step_result["score"])
             last_partial = step_result["output"]
+            self._log_srl_feedback(
+                goal=goal,
+                trajectory=expert_trajectory,
+                step_index=step_index,
+                cue=cue,
+                step_info=step_result["step"],
+            )
             partial_output = step_result["output"].get("partial")
             if isinstance(partial_output, dict):
                 partial_text = str(partial_output.get("text") or "")
@@ -211,6 +224,12 @@ class DeepLoop(Behavior):
         if not features:
             features = build_features(ctx)
         reward = max(0.0, min(1.0, rule_score if ok else 0.0))
+        verifier_reward = None
+        if verifier_name:
+            verifier_reward = self._run_final_verifier(verifier_name, data, result_payload)
+            if verifier_reward is not None:
+                reward = max(reward, float(verifier_reward))
+                data.setdefault("judge_scores", {}).setdefault("verifier", verifier_reward)
         metadata = {
             "planner_bundle": data.get("planner_bundle"),
             "judge_bundle": data.get("judge_bundle"),
@@ -219,6 +238,8 @@ class DeepLoop(Behavior):
             "overall_reward": overall_reward,
             "progress_observed": progress_observed,
         }
+        if verifier_reward is not None:
+            metadata["verifier_reward"] = verifier_reward
         record_outcome(arm_id, features, reward, metadata)
 
         if "effects" not in result_payload:
@@ -530,6 +551,112 @@ class DeepLoop(Behavior):
             partial["partial"]["status"] = "needs_review"
 
         return {"step": step_info, "output": partial, "score": score}
+
+    def _log_srl_feedback(
+        self,
+        *,
+        goal: str,
+        trajectory: Optional[List[Dict[str, Any]]],
+        step_index: int,
+        cue: str,
+        step_info: Dict[str, Any],
+    ) -> None:
+        if not trajectory or step_index >= len(trajectory):
+            return
+        target = trajectory[step_index]
+        if not isinstance(target, dict):
+            return
+        target_action = str(target.get("target_action") or "").strip()
+        if not target_action:
+            return
+        actual_action = self._format_step_action(step_info)
+        score = similarity_step(target_action, actual_action)
+        entry = {
+            "prefix": goal[:80],
+            "step_index": step_index,
+            "target": target_action,
+            "action": actual_action,
+            "r_step": score,
+            "meta": {"cue": cue, "hint": target.get("hint")},
+        }
+        log_srl_trace(entry)
+        ledger_record(
+            f"{CALL_SITE}:srl_step",
+            "srl_alignment",
+            {
+                "ok": score >= 0.5,
+                "delta_quality": score,
+                "faithfulness": score,
+                "notes": str(target.get("hint") or ""),
+            },
+            {"step_index": step_index, "cue": cue},
+        )
+
+    def _run_final_verifier(self, name: str, data: Dict[str, Any], payload: Dict[str, Any]) -> Optional[float]:
+        final_text = self._extract_final_text(payload)
+        if not final_text:
+            return None
+        result: Optional[float] = None
+        if name == "math_exact":
+            target = data.get("verifier_target")
+            if target is None:
+                return None
+            result = math_exact(final_text, target)
+        elif name == "json_schema_ok":
+            schema = data.get("verifier_schema")
+            if not schema:
+                return None
+            result = json_schema_ok(final_text, schema)
+        elif name == "unit_tests_pass":
+            report = data.get("verifier_report") or data.get("unit_test_report")
+            if report is None:
+                return None
+            result = unit_tests_pass(report)
+        else:
+            return None
+        ledger_record(
+            f"{CALL_SITE}:rlvr_final",
+            name,
+            {
+                "ok": bool(result and result >= 0.9),
+                "delta_quality": float(result or 0.0),
+                "faithfulness": float(result or 0.0),
+                "notes": "verifier",
+            },
+            {"verifier": name},
+        )
+        return result
+
+    def _extract_final_text(self, payload: Dict[str, Any]) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        final_text = payload.get("final")
+        if isinstance(final_text, dict):
+            final_text = final_text.get("text") or final_text.get("content")
+        if isinstance(final_text, str) and final_text.strip():
+            return final_text
+        partial = payload.get("partial")
+        if isinstance(partial, dict):
+            text = partial.get("text") or partial.get("content")
+            if isinstance(text, str) and text.strip():
+                return text
+        return ""
+
+    def _format_step_action(self, step_info: Dict[str, Any]) -> str:
+        if not isinstance(step_info, dict):
+            return ""
+        op = str(step_info.get("op") or "")
+        tool = step_info.get("tool")
+        pipeline = step_info.get("pipeline")
+        if isinstance(pipeline, list) and pipeline:
+            tool_repr = "->".join(str(item) for item in pipeline if item)
+        elif tool:
+            tool_repr = str(tool)
+        else:
+            tool_repr = ""
+        if tool_repr:
+            return f"{op}({tool_repr})".strip()
+        return op.strip()
 
     def _build_reflection_message(self, cue: str, step_result: Dict[str, Any], score: Dict[str, Any]) -> str:
         tool = step_result.get("step", {}).get("tool", cue)

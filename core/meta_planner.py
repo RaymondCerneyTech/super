@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 from typing import Dict, Iterable, List, Tuple
 
+import copy
+
 from core.bandit import UCB1
 from core.credit_ledger import record as ledger_record
 from core.cues import select_cue
@@ -30,6 +32,8 @@ def choose_planners(features: Dict[str, object], max_planners: int | None = None
     cue = str(features.get("cue") or "").lower()
     length = int(features.get("text_len") or 0)
     meaning = str(features.get("meaning") or "").lower()
+    goal_text = str(features.get("goal_text") or "").lower()
+    grounded_goal = any(token in goal_text for token in ("grounded", "cited"))
 
     picks: List[str] = []
     if cue in {"summarize", "compose"} or length < 600:
@@ -48,6 +52,11 @@ def choose_planners(features: Dict[str, object], max_planners: int | None = None
             unique.append(name)
     if not unique:
         unique = ["planner_fp"]
+    if grounded_goal:
+        if "planner_react" not in unique and "planner_react" in PLANNERS:
+            unique.insert(0, "planner_react")
+        if "planner_tot" in PLANNERS and "planner_tot" not in unique:
+            unique.append("planner_tot")
 
     if max_planners is not None and max_planners > 0:
         unique = unique[:max_planners]
@@ -94,6 +103,14 @@ def generate_candidates(
     candidates: List[Dict[str, object]] = []
     total_limit = target_total if (target_total and target_total > 0) else None
 
+    goal_text = ""
+    if isinstance(ctx, dict):
+        goal_text = str(ctx.get("goal") or "")
+        data_ref = ctx.get("data")
+        if isinstance(data_ref, dict):
+            goal_text = str(data_ref.get("goal") or goal_text)
+    grounded_goal = any(token in goal_text.lower() for token in ("grounded", "cited"))
+
     for name in planner_bundle:
         runs = max(1, min(3, k_per))
         for _ in range(runs):
@@ -106,6 +123,17 @@ def generate_candidates(
                 result = {"planner": name, "error": str(exc), "steps": []}
             result["planner_name"] = name
             candidates.append(result)
+            if (
+                name == "planner_react"
+                and grounded_goal
+                and not result.get("goal_satisfied", False)
+                and "planner_tot" in PLANNERS
+                and not any(c.get("planner_name") == "planner_tot" for c in candidates)
+            ):
+                tot_ctx = copy.deepcopy(ctx)
+                tot_result = run_planner("planner_tot", tot_ctx)
+                tot_result["planner_name"] = "planner_tot"
+                candidates.append(tot_result)
         if total_limit is not None and len(candidates) >= total_limit:
             break
 
@@ -149,10 +177,16 @@ def build_features(ctx: Dict[str, object]) -> Dict[str, object]:
     meaning = ""
     if isinstance(data, dict):
         meaning = str(data.get("meaning") or "")
+    goal_text = ""
+    if isinstance(ctx, dict):
+        goal_text = str(ctx.get("goal") or "")
+    if isinstance(data, dict):
+        goal_text = str(data.get("goal") or goal_text)
     return {
         "cue": cue,
         "meaning": meaning,
         "text_len": len(text or ""),
+        "goal_text": goal_text,
     }
 
 

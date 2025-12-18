@@ -13,11 +13,14 @@ from core import llama_profiles
 from core import models as model_store
 from core.interfaces import Context
 from core.interpreter import Interpreter
-from core.planner import normalise_goal_flags, plan
+from core.planner import normalise_goal_flags
+from core import planner as planner_module
 from core.registry import BehaviorRegistry
 from core.rewards import ensure_reward_dict
 from core.router import SimpleRouter
 from core.logs import append_jsonl
+from core.eval_rag import run_rag_evaluation
+from core.meta_controller import choose_bundle, record_bundle_outcome
 from tools import llama_runner
 from tools.registry import TOOLS as TOOL_REGISTRY
 
@@ -51,6 +54,10 @@ _HELP_TEXT = dedent(
       ask --question \"...\" [--k-passages N] [--max-chars N] [--cited] [--grounded] [--verbose | --max-verbose | --min-words N] [--fresh DAYS] [--index-backend BACKEND] [--log-file PATH] [--no-bandit] [--explain]
           Retrieve knowledge and produce a cited, verbose answer. Example:
             python main.py ask --question \"Explain transformers\" --cited --grounded --verbose --min-words 1200 --explain
+
+      eval rag --dataset DATASET [--output DIR] [--faithfulness-threshold VAL]
+          Score a RAG benchmark and emit JSON/Markdown reports. Example:
+            python main.py eval rag --dataset data/evals/sample.jsonl --faithfulness-threshold 0.75
 
       plan --goal \"summary,compliant,formatted\" [--text TEXT] [--policies \"phrase1,...\"] [--log-file PATH] [--no-bandit] [--explain] [--max-expansions N]
           Construct a behaviour plan to satisfy goal flags. Example:
@@ -157,6 +164,17 @@ def _config_section(args: argparse.Namespace, section: str) -> Dict[str, object]
     value = config.get(section, {})
     return value if isinstance(value, dict) else {}
 
+def _json_safe(value: Any, depth: int = 0) -> Any:
+    if depth > 6:
+        return repr(value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, Mapping):
+        return {str(k): _json_safe(v, depth + 1) for k, v in list(value.items())[:50]}
+    if isinstance(value, (list, tuple, set)):
+        iterable = list(value)[:50]
+        return [_json_safe(v, depth + 1) for v in iterable]
+    return repr(value)
 
 def command_summarize(args: argparse.Namespace) -> None:
     registry, interpreter, router = build_runtime()
@@ -228,7 +246,7 @@ def command_check(args: argparse.Namespace) -> None:
 def command_ingest(args: argparse.Namespace) -> None:
     registry, interpreter, _ = build_runtime()
     config = _config_section(args, "ingest")
-    index_backend = args.index_backend or config.get("index_backend", "tfidf")
+    index_backend = args.index_backend or config.get("index_backend", "hnsw")
     tags = args.tags if args.tags is not None else config.get("tags", "")
     limit = args.limit if args.limit is not None else config.get("limit", 15)
     lang_any = bool(args.lang_any or config.get("lang_any", False))
@@ -265,7 +283,7 @@ def command_ask(args: argparse.Namespace) -> None:
     registry, interpreter, router = build_runtime()
     config = _config_section(args, "ask")
 
-    index_backend = args.index_backend or config.get("index_backend", "tfidf")
+    index_backend = args.index_backend or config.get("index_backend", "hnsw")
     k_passages = args.k_passages if args.k_passages is not None else config.get("k_passages", 12)
     max_chars = args.max_chars if args.max_chars is not None else config.get("max_chars", 12000)
     tags = args.tags if args.tags is not None else config.get("tags", "")
@@ -339,15 +357,45 @@ def command_ask(args: argparse.Namespace) -> None:
         data["max_words"] = max_words
     if fresh_days:
         data["fresh_days"] = fresh_days
+    if "grounded" in goal_terms or "cited" in goal_terms:
+        data["apply_research_prompt"] = True
+    else:
+        data.setdefault("allow_ungrounded_profile", True)
+
+    raw_max_models = args.max_models if args.max_models is not None else config.get("max_models")
+    max_models = _optional_int(raw_max_models, 0)
+    if max_models > 0:
+        data["max_models"] = max_models
+    raw_max_planners = args.max_planners if args.max_planners is not None else config.get("max_planners")
+    max_planners = _optional_int(raw_max_planners, 0)
+    if max_planners > 0:
+        data["max_planners"] = max_planners
+    raw_max_candidates = args.max_candidates if args.max_candidates is not None else config.get("max_candidates")
+    max_candidates = _optional_int(raw_max_candidates, 0)
+    if max_candidates > 0:
+        data["max_candidates"] = max_candidates
+        data.setdefault("n_candidates", max_candidates)
+    raw_max_wall = args.max_wall_ms if args.max_wall_ms is not None else config.get("max_wall_ms")
+    max_wall_ms = _optional_int(raw_max_wall, 0)
+    if max_wall_ms > 0:
+        data["max_wall_ms"] = max_wall_ms
+        ctx["max_wall_ms"] = max_wall_ms
 
     goal_flags = normalise_goal_flags(goal_str)
-    plan_result = plan(
+    choose_bundle(
+        ctx,
+        planners=["planner_react", "planner_tot", "planner_fp"],
+        judge_bundle=data.get("judge_bundle"),
+        budget=max_candidates or max_expansions,
+    )
+    plan_result = planner_module.plan(
         goal_flags,
         ctx,
         registry,
         interpreter,
         cluster_bias=cluster,
         max_expansions=max_expansions,
+        max_wall_ms=max_wall_ms or None,
     )
 
     steps = plan_result.get("steps", [])
@@ -373,22 +421,71 @@ def command_ask(args: argparse.Namespace) -> None:
                 print(f"   effects: {', '.join(effects)}")
             reward_preview = {k: round(v, 3) for k, v in rewards.items() if k != "overall"}
             print(f"   rewards: overall={round(rewards.get('overall', 0.0), 3)} {reward_preview}")
+    react_trace = plan_result.get("react_trace") or final_data.get("react_trace")
+    if explain and react_trace:
+        print("ReAct Trace:")
+        for entry in react_trace:
+            iteration = entry.get("iteration")
+            thought = entry.get("thought", "")
+            action = entry.get("action", "")
+            observation = entry.get("observation", "")
+            reward = entry.get("reward", 0.0)
+            print(f"  {iteration}. think: {thought}")
+            print(f"     act: {action} -> {observation} (reward={round(reward,3)})")
 
     final_ctx = plan_result.get("ctx", ctx)
     final_data_obj = final_ctx.get("data", {})
-    final_data = final_data_obj if isinstance(final_data_obj, dict) else {}
+    if isinstance(final_data_obj, dict):
+        final_data = final_data_obj
+    elif isinstance(final_data_obj, Mapping):
+        final_data = dict(final_data_obj)
+    else:
+        final_data = {}
+    print(f"[plan] data keys: {list(final_data.keys())}")
     final_rewards = ensure_reward_dict(steps[-1][1].get("rewards", {}))
     router.register_outcome(cluster, final_rewards)
     router.register_bandit_outcome(final_ctx, final_rewards)
+    record_bundle_outcome(final_ctx, final_rewards)
 
-    answer = final_data.get("answer", "")
-    if answer:
-        print("Answer\n" + answer)
-    sources = final_data.get("sources", [])
-    if sources:
-        print("Sources:")
-        for entry in sources:
-            print(f"  {entry['marker']} {entry['source']}")
+    answer_text = final_data.get("answer")
+    if not answer_text:
+        llama_output = final_data.get("llama_output")
+        if isinstance(llama_output, dict):
+            answer_text = llama_output.get("text")
+    if (not answer_text) and isinstance(final_data.get("sanitized_text"), str):
+        answer_text = final_data.get("sanitized_text")
+    if (not answer_text) and isinstance(final_data.get("aggregated_text"), str):
+        answer_text = final_data.get("aggregated_text")
+    aggregated_text = final_data.get("aggregated_text") if isinstance(final_data.get("aggregated_text"), str) else None
+    sanitized_text = final_data.get("sanitized_text") if isinstance(final_data.get("sanitized_text"), str) else None
+    printed_answer = False
+    if isinstance(answer_text, str) and answer_text.strip():
+        print("Answer:\n" + answer_text.strip())
+        printed_answer = True
+    elif sanitized_text and sanitized_text.strip():
+        print("Answer (sanitized):\n" + sanitized_text.strip())
+        printed_answer = True
+    elif aggregated_text and aggregated_text.strip():
+        print("Answer (aggregated):\n" + aggregated_text.strip())
+        printed_answer = True
+        aggregated_text = None  # already printed fully
+
+    if aggregated_text and aggregated_text.strip():
+        preview = aggregated_text.strip()
+        if len(preview) > 1200:
+            preview = preview[:1200].rstrip() + "..."
+        print("Aggregated Passages:\n" + preview)
+    elif not printed_answer:
+        print(f"[plan] no generated answer. data keys={list(final_data.keys())}")
+    passages = final_data.get("passages")
+    if isinstance(passages, list) and passages:
+        print("Top Passages:")
+        for idx, passage in enumerate(passages[:3], start=1):
+            text = str(passage.get("text", "")) if isinstance(passage, dict) else str(passage)
+            snippet = text.strip()
+            if len(snippet) > 240:
+                snippet = snippet[:240].rstrip() + "..."
+            print(f"  [{idx}] {snippet}")
     print_reward({"rewards": final_rewards})
     if not plan_result.get("goal_satisfied", False):
         remaining = plan_result.get("remaining_flags", [])
@@ -409,8 +506,29 @@ def command_ask(args: argparse.Namespace) -> None:
             "word_count": final_data.get("word_count"),
             "no_bandit": bool(no_bandit),
             "meaning": final_data.get("meaning"),
+            "web_trace": final_data.get("web_trace", []),
         }
         append_jsonl(Path(log_file), record)
+
+
+def command_eval_rag(args: argparse.Namespace) -> None:
+    dataset_path = Path(args.dataset).expanduser().resolve()
+    output_path = Path(args.output or ".ai/evals").expanduser().resolve()
+    threshold = float(args.faithfulness_threshold)
+
+    metrics, report_dir = run_rag_evaluation(dataset_path, output_path)
+    print("[eval:rag] metrics:")
+    print(json.dumps(metrics, indent=2))
+    print(f"[eval:rag] report saved to {report_dir}")
+
+    faithfulness = metrics.get("faithfulness", 0.0)
+    if faithfulness < threshold:
+        print(
+            f"[eval:rag] faithfulness {faithfulness:.4f} fell below threshold {threshold:.4f}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return None
 
 
 def command_plan(args: argparse.Namespace) -> None:
@@ -427,6 +545,7 @@ def command_plan(args: argparse.Namespace) -> None:
     if not goal_flags:
         print("No goal flags provided.")
         return
+    goal_flag_set = set(goal_flags)
 
     text_seed = args.text or ""
     ctx = _prepare_context(
@@ -439,10 +558,15 @@ def command_plan(args: argparse.Namespace) -> None:
     router_state = _ensure_router(ctx)
     data = _ensure_data(ctx)
     cluster = router_state["cluster_bias"]
+    data.setdefault("goal_flags", list(goal_flags))
     policies_arg = getattr(args, "policies", "") or ""
     policies = [item.strip() for item in policies_arg.split(",") if item.strip()]
     if policies:
         data["policies"] = policies
+    if "question" not in data:
+        seed_question = text_seed or data.get("text")
+        if isinstance(seed_question, str) and seed_question.strip():
+            data["question"] = seed_question
 
     llama_payload: Dict[str, Any] = {}
     config_llama = config.get("llama")
@@ -486,6 +610,15 @@ def command_plan(args: argparse.Namespace) -> None:
         merged_vars.update(llama_vars)
         llama_payload["vars"] = merged_vars
 
+    llama_model = _optional_str(getattr(args, "llama_model", None))
+    if not llama_model:
+        model_from_config = config.get("llama_model")
+        if isinstance(model_from_config, str):
+            llama_model = _optional_str(model_from_config)
+
+    if llama_model:
+        llama_payload["model"] = llama_model
+
     if llama_payload:
         data["llama"] = llama_payload
         profile_value = llama_payload.get("profile")
@@ -496,14 +629,107 @@ def command_plan(args: argparse.Namespace) -> None:
         vars_value = llama_payload.get("vars")
         if isinstance(vars_value, dict):
             data["llama_vars"] = {str(key): str(value) for key, value in vars_value.items()}
+        model_value = llama_payload.get("model")
+        if isinstance(model_value, str) and model_value.strip():
+            data["llama_model"] = model_value.strip()
 
-    plan_result = plan(
+    seed_urls: List[str] = []
+    cli_seed_urls = getattr(args, "seed_url", None)
+    if cli_seed_urls:
+        seed_urls.extend(cli_seed_urls)
+    config_seed_urls = config.get("seed_url")
+    if isinstance(config_seed_urls, list):
+        seed_urls.extend(str(item) for item in config_seed_urls)
+    elif isinstance(config_seed_urls, str):
+        seed_urls.append(config_seed_urls)
+    if seed_urls:
+        data["bootstrap_urls"] = seed_urls
+
+    seed_paths: List[str] = []
+    cli_seed_paths = getattr(args, "seed_path", None)
+    if cli_seed_paths:
+        seed_paths.extend(cli_seed_paths)
+    config_seed_paths = config.get("seed_path")
+    if isinstance(config_seed_paths, list):
+        seed_paths.extend(str(item) for item in config_seed_paths)
+    elif isinstance(config_seed_paths, str):
+        seed_paths.append(config_seed_paths)
+    if seed_paths:
+        data["bootstrap_paths"] = seed_paths
+
+    seed_texts: List[str] = []
+    cli_seed_texts = getattr(args, "seed_text", None)
+    if cli_seed_texts:
+        seed_texts.extend(cli_seed_texts)
+    config_seed_texts = config.get("seed_text")
+    if isinstance(config_seed_texts, list):
+        seed_texts.extend(str(item) for item in config_seed_texts)
+    elif isinstance(config_seed_texts, str):
+        seed_texts.append(config_seed_texts)
+    if seed_texts:
+        data["bootstrap_texts"] = seed_texts
+
+    auto_bootstrap = config.get("auto_bootstrap", True)
+    if getattr(args, "no_auto_bootstrap", False):
+        auto_bootstrap = False
+    data["auto_bootstrap"] = bool(auto_bootstrap)
+    if getattr(args, "skip_llama", False):
+        data["skip_llama"] = True
+    if getattr(args, "mpc", False):
+        data["use_mpc"] = True
+    if getattr(args, "rollout_horizon", None) is not None:
+        data["mpc_rollout_horizon"] = int(args.rollout_horizon)
+    if getattr(args, "uncertainty_penalty", None) is not None:
+        data["mpc_uncertainty_penalty"] = float(args.uncertainty_penalty)
+    if getattr(args, "sc", None) is not None:
+        data["sc"] = int(args.sc)
+    if getattr(args, "react_max_iterations", None) is not None:
+        data["react_max_iterations"] = int(args.react_max_iterations)
+    if "grounded" not in goal_flag_set and "cited" not in goal_flag_set:
+        data.setdefault("allow_ungrounded_profile", True)
+    else:
+        data["apply_research_prompt"] = True
+
+    choose_bundle(
+        ctx,
+        planners=["planner_react", "planner_tot", "planner_fp"],
+        judge_bundle=data.get("judge_bundle"),
+        budget=max_expansions,
+    )
+    raw_max_models = args.max_models if args.max_models is not None else config.get("max_models")
+    max_models = _optional_int(raw_max_models, 0)
+    if max_models > 0:
+        data["max_models"] = max_models
+    raw_max_planners = args.max_planners if args.max_planners is not None else config.get("max_planners")
+    max_planners_arg = _optional_int(raw_max_planners, 0)
+    if max_planners_arg > 0:
+        data["max_planners"] = max_planners_arg
+    raw_max_candidates = args.max_candidates if args.max_candidates is not None else config.get("max_candidates")
+    max_candidates = _optional_int(raw_max_candidates, 0)
+    if max_candidates > 0:
+        data["max_candidates"] = max_candidates
+        data.setdefault("n_candidates", max_candidates)
+    raw_max_wall = args.max_wall_ms if args.max_wall_ms is not None else config.get("max_wall_ms")
+    max_wall_ms = _optional_int(raw_max_wall, 0)
+    if max_wall_ms > 0:
+        data["max_wall_ms"] = max_wall_ms
+        ctx["max_wall_ms"] = max_wall_ms
+
+    goal_flags = normalise_goal_flags(args.goal)
+    choose_bundle(
+        ctx,
+        planners=["planner_react", "planner_tot", "planner_fp"],
+        judge_bundle=data.get("judge_bundle"),
+        budget=max_candidates or max_expansions,
+    )
+    plan_result = planner_module.plan(
         goal_flags,
         ctx,
         registry,
         interpreter,
         cluster_bias=cluster,
         max_expansions=max_expansions,
+        max_wall_ms=max_wall_ms or None,
     )
 
     steps = plan_result.get("steps", [])
@@ -532,6 +758,103 @@ def command_plan(args: argparse.Namespace) -> None:
             print(f"   rewards: overall={round(rewards.get('overall', 0.0), 3)} {reward_preview}")
 
     final_ctx = plan_result.get("ctx", ctx)
+    final_data_obj = final_ctx.get("data", {})
+    if isinstance(final_data_obj, dict):
+        final_data = final_data_obj
+    elif isinstance(final_data_obj, Mapping):
+        final_data = dict(final_data_obj)
+    else:
+        final_data = {}
+    answer_text = final_data.get("answer")
+    if not answer_text:
+        llama_output = final_data.get("llama_output")
+        if isinstance(llama_output, dict):
+            answer_text = llama_output.get("text")
+    if not answer_text:
+        answer_text = final_data.get("sanitized_text")
+    aggregated_text = final_data.get("aggregated_text") if isinstance(final_data.get("aggregated_text"), str) else None
+    printed_answer = False
+    if isinstance(answer_text, str) and answer_text.strip():
+        print("Answer:\n" + answer_text.strip())
+        printed_answer = True
+    elif aggregated_text and aggregated_text.strip():
+        print("Answer (aggregated):\n" + aggregated_text.strip())
+        printed_answer = True
+    raw_sources = final_data.get("sources")
+    snapshot_sources: List[Dict[str, str]] = []
+    if isinstance(raw_sources, list):
+        for entry in raw_sources:
+            if not isinstance(entry, Mapping):
+                continue
+            marker = str(entry.get('marker') or '').strip()
+            if not marker:
+                marker = f"S{len(snapshot_sources) + 1}"
+            title = str(entry.get('title') or entry.get('source') or marker).strip() or marker
+            url = str(entry.get('url') or '').strip()
+            if url and not url.lower().startswith(('http://', 'https://')):
+                url = ''
+            snapshot_sources.append({'marker': marker, 'title': title, 'url': url})
+    passages = final_data.get('passages')
+    if not snapshot_sources and isinstance(passages, list):
+        for idx, passage in enumerate(passages, start=1):
+            if not isinstance(passage, Mapping):
+                continue
+            meta_obj = passage.get('meta', {})
+            meta = meta_obj if isinstance(meta_obj, Mapping) else {}
+            title = str(meta.get('title') or meta.get('url') or passage.get('doc_id') or f"Source {idx}").strip()
+            url = str(meta.get('canonical_url') or meta.get('url') or '').strip()
+            if url and not url.lower().startswith(('http://', 'https://')):
+                url = ''
+            snapshot_sources.append({'marker': f"S{idx}", 'title': title, 'url': url})
+    final_data['sources'] = snapshot_sources
+    if snapshot_sources:
+        print('Sources:')
+        for entry in snapshot_sources:
+            marker = entry.get('marker') or ''
+            display_marker = marker if marker.startswith('[') else f"[{marker}]"
+            title = entry.get('title') or ''
+            url = entry.get('url') or ''
+            if url:
+                print(f"  {display_marker} {title} - {url}")
+            else:
+                print(f"  {display_marker} {title}")
+    top_passages_info: List[Dict[str, str]] = []
+    if isinstance(passages, list) and passages:
+        print('Top Passages:')
+        for idx, passage in enumerate(passages[:3], start=1):
+            text_block = str(passage.get('text', '')) if isinstance(passage, dict) else str(passage)
+            snippet = text_block.strip()
+            if len(snippet) > 240:
+                snippet = snippet[:240].rstrip() + '...'
+            print(f"  [{idx}] {snippet}")
+        for entry in passages[:5]:
+            if not isinstance(entry, Mapping):
+                continue
+            meta_obj = entry.get('meta', {})
+            meta = meta_obj if isinstance(meta_obj, Mapping) else {}
+            title = str(meta.get('title') or meta.get('url') or entry.get('doc_id') or '').strip()
+            url = str(meta.get('canonical_url') or meta.get('url') or '').strip()
+            if url and not url.lower().startswith(('http://', 'https://')):
+                url = ''
+            top_passages_info.append({'title': title, 'url': url, 'doc_id': str(entry.get('doc_id') or '')})
+    if not printed_answer:
+        if aggregated_text and aggregated_text.strip():
+            preview = aggregated_text.strip()
+            if len(preview) > 1200:
+                preview = preview[:1200].rstrip() + "..."
+            print("Aggregated Passages:\n" + preview)
+        else:
+            print(f"[plan] no generated answer. data keys={list(final_data.keys())}")
+    passages = final_data.get("passages")
+    if isinstance(passages, list) and passages:
+        print("Top Passages:")
+        for idx, passage in enumerate(passages[:3], start=1):
+            text = str(passage.get("text", "")) if isinstance(passage, dict) else str(passage)
+            snippet = text.strip()
+            if len(snippet) > 240:
+                snippet = snippet[:240].rstrip() + "..."
+            print(f"  [{idx}] {snippet}")
+
     final_rewards = ensure_reward_dict(steps[-1][1].get("rewards", {}))
     router.register_outcome(cluster, final_rewards)
     router.register_bandit_outcome(final_ctx, final_rewards)
@@ -554,9 +877,55 @@ def command_plan(args: argparse.Namespace) -> None:
             "unmet_goal_flags": plan_result.get("remaining_flags", []),
             "no_bandit": bool(no_bandit),
             "meaning": final_ctx.get("data", {}).get("meaning"),
+            "bundle_arm": router_state.get("bundle_arm") or final_data.get("bundle_arm"),
+            "bundle_cue": router_state.get("bundle_cue"),
         }
         append_jsonl(Path(log_file), record)
 
+    snapshot_steps: List[Dict[str, Any]] = []
+    for behavior, info in steps:
+        info_rewards = ensure_reward_dict(info.get("rewards", {}))
+        snapshot_steps.append(
+            {
+                "name": behavior,
+                "effects": info.get("effects", []),
+                "reward": info_rewards.get("overall"),
+            }
+        )
+
+    snapshot_top_passages = final_data.get("top_passages") or top_passages_info
+    snapshot_auto_query = final_data.get("auto_query") or data.get("auto_query") or []
+    snapshot_sc_votes = final_data.get("sc_votes") or data.get("sc_votes") or []
+    snapshot_react = plan_result.get("react_trace") or final_data.get("react_trace") or []
+    snapshot = {
+        "goal": goal_flags,
+        "question": ctx.get("text") or final_data.get("question"),
+        "answer": answer_text.strip() if isinstance(answer_text, str) else "",
+        "sources": snapshot_sources,
+        "top_passages": snapshot_top_passages,
+        "steps": snapshot_steps,
+        "index_backend": final_data.get("index_backend") or data.get("index_backend"),
+        "mpc_mode": final_data.get("mpc_mode") or data.get("mpc_mode"),
+        "react_trace": snapshot_react,
+        "sc_votes": snapshot_sc_votes,
+        "auto_query": snapshot_auto_query,
+        "rag_metrics": final_data.get("rag_metrics"),
+        "bundle_arm": final_data.get("bundle_arm") or router_state.get("bundle_arm"),
+        "model_bundle": final_data.get("model_bundle") or data.get("model_bundle"),
+        "planner_bundle": final_data.get("planner_bundle") or data.get("planner_bundle"),
+        "judge_bundle": final_data.get("judge_bundle") or data.get("judge_bundle"),
+        "web_trace": final_data.get("web_trace") or data.get("web_trace") or [],
+        "final_summary": final_data.get("final_summary"),
+        "unmet_requirements": final_data.get("unmet_requirements") or data.get("unmet_requirements", []),
+        "reward": final_rewards,
+        "data": _json_safe(final_data),
+    }
+    try:
+        snapshot_path = Path(".ai") / "last_plan.json"
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        print(f"[plan] failed to write last_plan.json: {exc}")
 
 def command_do(args: argparse.Namespace) -> None:
     registry, interpreter, _ = build_runtime()
@@ -862,8 +1231,27 @@ def build_parser() -> argparse.ArgumentParser:
     ask_parser.add_argument("--log-file", help="JSON Lines log output path")
     ask_parser.add_argument("--no-bandit", action="store_true", help="Disable LinUCB routing bias")
     ask_parser.add_argument("--max-expansions", type=int)
+    ask_parser.add_argument("--max-models", type=int, help="Cap model bundle exploration")
+    ask_parser.add_argument("--max-planners", type=int, help="Cap planner bundle exploration")
+    ask_parser.add_argument("--max-candidates", type=int, help="Cap plan candidates to explore")
+    ask_parser.add_argument("--max-wall-ms", type=int, help="Wall-clock budget for planning loops (milliseconds)")
     ask_parser.add_argument("--explain", action="store_true")
     ask_parser.set_defaults(func=command_ask)
+
+    eval_parser = subparsers.add_parser("eval", help="Run evaluation suites")
+    eval_subparsers = eval_parser.add_subparsers(dest="eval_command")
+    eval_subparsers.required = True  # type: ignore[attr-defined]
+
+    eval_rag_parser = eval_subparsers.add_parser("rag", help="Evaluate grounded answers against a benchmark dataset")
+    eval_rag_parser.add_argument("--dataset", required=True, help="Path to JSON/JSONL dataset with question/answer/context records")
+    eval_rag_parser.add_argument("--output", help="Directory for evaluation artifacts (default: .ai/evals)")
+    eval_rag_parser.add_argument(
+        "--faithfulness-threshold",
+        type=float,
+        default=0.7,
+        help="Fail if average faithfulness falls below this value",
+    )
+    eval_rag_parser.set_defaults(func=command_eval_rag)
 
     plan_parser = subparsers.add_parser("plan", help="Generate a behavior plan")
     plan_parser.add_argument("--goal", required=True)
@@ -872,9 +1260,24 @@ def build_parser() -> argparse.ArgumentParser:
     plan_parser.add_argument("--log-file", help="JSON Lines log output path")
     plan_parser.add_argument("--no-bandit", action="store_true", help="Disable LinUCB routing bias")
     plan_parser.add_argument("--max-expansions", type=int)
+    plan_parser.add_argument("--max-models", type=int, help="Cap model bundle exploration")
+    plan_parser.add_argument("--max-planners", type=int, help="Cap planner bundle exploration")
+    plan_parser.add_argument("--max-candidates", type=int, help="Cap plan candidates to explore")
+    plan_parser.add_argument("--max-wall-ms", type=int, help="Wall-clock budget for planning loops (milliseconds)")
     plan_parser.add_argument("--explain", action="store_true")
     plan_parser.add_argument("--llama-profile", help="Apply this llama profile when planning llama_generate steps")
     plan_parser.add_argument("--llama-var", action="append", metavar="KEY=VALUE", help="Template variable for llama profile (repeatable)")
+    plan_parser.add_argument("--llama-model", help="Override llama model path/name for llama_generate")
+    plan_parser.add_argument("--seed-url", action="append", help="Bootstrap retrieval by ingesting these URLs before planning")
+    plan_parser.add_argument("--seed-path", action="append", help="Bootstrap retrieval from local file paths")
+    plan_parser.add_argument("--seed-text", action="append", help="Bootstrap retrieval using inline text snippets")
+    plan_parser.add_argument("--no-auto-bootstrap", action="store_true", help="Disable automatic seeding when retrieval has no results")
+    plan_parser.add_argument("--skip-llama", action="store_true", help="Skip llama generation and use aggregated text")
+    plan_parser.add_argument("--mpc", action="store_true", help="Enable MPC world-model planning")
+    plan_parser.add_argument("--rollout-horizon", type=int, help="Lookahead horizon for MPC imagined rollouts")
+    plan_parser.add_argument("--uncertainty-penalty", type=float, help="Penalty applied to ensemble variance during MPC scoring")
+    plan_parser.add_argument("--sc", type=int, metavar="K", help="Self-consistency samples for grounded generation")
+    plan_parser.add_argument("--react-max-iterations", type=int, help="Override max iterations for the ReAct loop")
     plan_parser.set_defaults(func=command_plan)
 
     models_parser = subparsers.add_parser("models", help="Manage local LLM models")

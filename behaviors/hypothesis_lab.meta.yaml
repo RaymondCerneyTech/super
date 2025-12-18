@@ -1,0 +1,16 @@
+name: hypothesis_lab
+description: "Generate -> reflect -> rank -> evolve hypotheses using meta experts."
+inputs:
+  - question
+outputs:
+  - hypotheses
+preconditions:
+  - "text_len >= 0"
+effects:
+  - has_hypotheses
+  - has_meta_review
+capabilities:
+  - analytic
+  - creative
+cost: 1.5
+requires_explanation: true

@@ -1,4 +1,7 @@
 # core/interpreter.py
+import re
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.checks import CHECKS
@@ -11,7 +14,18 @@ from core.rewards import (
     ensure_reward_dict,
     merge_rewards,
 )
+from core.logs import append_jsonl
 from core.registry import BehaviorRegistry
+from core.world_model import compact_state, extract_action_args
+
+ROLLOUT_PATH = Path(".ai") / "rollouts.jsonl"
+ROLLOUT_BEHAVIORS = {
+    "retrieve",
+    "aggregate",
+    "llama_generate",
+    "document_formatting",
+    "policy_check",
+}
 
 
 class Interpreter:
@@ -21,6 +35,9 @@ class Interpreter:
     def execute(self, name: str, ctx: Context) -> Result:
         behavior = self.registry.get(name)
         data = ctx.setdefault("data", {})
+        if isinstance(data, dict):
+            data.setdefault("auto_query", [])
+            data.setdefault("sc_votes", [])
 
         for key in behavior.inputs:
             if key not in data and key not in ctx:
@@ -46,6 +63,11 @@ class Interpreter:
                 "rationale": {"why": "argument validation failed", "evidence": validation_errors},
                 "effects": [],
             }
+
+        prev_state_snapshot: Optional[Dict[str, Any]] = None
+        if name != "log_rollouts":
+            prev_state_snapshot = compact_state(data)
+            data["_prev_state"] = prev_state_snapshot
 
         result = behavior.run(ctx) or {}
 
@@ -78,6 +100,11 @@ class Interpreter:
 
         effects = result["effects"] if "effects" in result else self.registry.behavior_effects(name)
 
+        action_args = extract_action_args(meta, data)
+        last_action = {"name": name, "args": action_args}
+        if name != "log_rollouts":
+            data["_last_action"] = last_action
+
         final_result: Result = dict(result)
         final_result["checks"] = checks
         final_result["output"] = output
@@ -86,7 +113,15 @@ class Interpreter:
         final_result["rewards"] = reward_dict
         final_result["reward"] = reward_dict
 
+        if name == "document_formatting":
+            rerun = self._handle_grounding_escalation(ctx, final_result)
+            if rerun is not None:
+                return rerun
+
         ok = bool(result.get("ok", True))
+        if name in ROLLOUT_BEHAVIORS and prev_state_snapshot is not None:
+            self._log_transition(prev_state_snapshot, data, last_action, reward_dict.get("overall", 0.0))
+
         self._store_run_outcome(ctx, name, reward_dict, checks, output, rationale, effects, ok)
         return final_result
 
@@ -376,9 +411,205 @@ class Interpreter:
                 if entry not in bucket:
                     bucket.append(entry)
 
+    def _handle_grounding_escalation(self, ctx: Context, result: Result) -> Optional[Result]:
+        if not isinstance(ctx, dict):
+            return None
+        data = ctx.get("data")
+        if not isinstance(data, dict):
+            return None
+        requires_grounding = self._requires_grounding(data)
+        requires_llm = self._requires_llm_output(data)
+        if not requires_grounding and not requires_llm:
+            return None
+        answer_text = str(data.get("answer") or result.get("output", {}).get("answer") or "")
+        missing = self._find_uncited_bullets(answer_text)
+        needs_sources = bool(data.get("needs_more_sources"))
+
+        if needs_sources and not data.get("_triangulation_attempted"):
+            data["_triangulation_attempted"] = True
+            triangulated = self._triangulate_via_tools(ctx, data)
+            self.execute("retrieve", ctx)
+            self.execute("aggregate", ctx)
+            if triangulated:
+                return self._rerun_generation(ctx, data, requires_llm)
+
+        if requires_llm and not data.get("_llm_generated"):
+            return self._rerun_generation(ctx, data, requires_llm)
+
+        if not requires_grounding:
+            return None
+        if not missing:
+            return None
+        auto_queries = data.setdefault("auto_query", [])
+        if not data.get("_auto_query_attempted"):
+            query = self._build_auto_query(missing, data)
+            if not query:
+                return None
+            auto_queries.append(query)
+            data["_auto_query_attempted"] = True
+            original_query = data.get("query")
+            data["query"] = query
+            self._log_web_trace(data, {"action": "web_search", "query": query})
+            search_result = self.execute("web_search", ctx)
+            search_output = search_result.get("output") if isinstance(search_result, dict) else {}
+            search_list = search_output.get("search_results") if isinstance(search_output, dict) else []
+            url = ""
+            for entry in search_list or []:
+                url = entry.get("url") or ""
+                if url:
+                    break
+            if url:
+                data["url"] = url
+                self._log_web_trace(data, {"action": "web_read", "url": url})
+                self.execute("web_read", ctx)
+                data.pop("url", None)
+            self.execute("aggregate", ctx)
+            self.execute("llama_generate", ctx)
+            if original_query is not None:
+                data["query"] = original_query
+            else:
+                data.pop("query", None)
+            return self.execute("document_formatting", ctx)
+
+        note = self._refusal_note(missing)
+        amended = (answer_text.rstrip() + "\n\n" + note).strip()
+        data["answer"] = amended
+        output = result.setdefault("output", {})
+        output["answer"] = amended
+        logs = list(result.get("logs", []))
+        logs.append("document_formatting: unresolved citation gaps")
+        result["logs"] = logs
+        return result
+
+    def _requires_grounding(self, data: Dict[str, Any]) -> bool:
+        flags = data.get("goal_flags")
+        if isinstance(flags, (list, tuple, set)):
+            if any(str(flag).lower() in {"grounded", "cited"} for flag in flags):
+                return True
+        return bool(data.get("grounded") or data.get("cited"))
+
+    def _requires_llm_output(self, data: Dict[str, Any]) -> bool:
+        flags = data.get("goal_flags")
+        if isinstance(flags, str):
+            flags = [frag.strip() for frag in flags.split(",")]
+        if isinstance(flags, (list, tuple, set)):
+            normalized = {str(flag).strip().lower() for flag in flags}
+            return "llm_output" in normalized
+        return False
+
+    def _find_uncited_bullets(self, answer: str) -> List[str]:
+        uncited: List[str] = []
+        bullet_re = re.compile(r"^(\s*(?:[-*]|\d+\.)\s+)(.+)$")
+        for line in answer.splitlines():
+            stripped = line.strip()
+            match = bullet_re.match(stripped)
+            if not match:
+                continue
+            if "[S" not in stripped:
+                uncited.append(match.group(2).strip())
+        return uncited
+
+    def _build_auto_query(self, lines: List[str], data: Dict[str, Any]) -> str:
+        fragments: List[str] = []
+        for line in lines:
+            cleaned = re.sub(r"\[S\d+\]", "", line).strip()
+            if cleaned:
+                fragments.append(cleaned)
+        base = " ".join(fragments).strip()
+        if not base:
+            return ""
+        question = str(data.get("question") or data.get("text") or "")
+        combined = f"{question} {base}".strip()
+        return combined[:240]
+
+    def _refusal_note(self, missing_lines: List[str]) -> str:
+        if not missing_lines:
+            return "Unsupported or low-support claims remain; additional sources are required."
+        unique: List[str] = []
+        for line in missing_lines:
+            cleaned = re.sub(r"\[S\d+\]", "", line).strip()
+            if cleaned and cleaned not in unique:
+                unique.append(cleaned)
+        bullet_list = "\n".join(f"- {item}" for item in unique[:5])
+        return "Unsupported or low-support claims:\n" + bullet_list
+
+    def _log_transition(
+        self,
+        prev_state: Dict[str, Any],
+        data: Dict[str, Any],
+        action: Dict[str, Any],
+        reward: float,
+    ) -> None:
+        current_state = compact_state(data)
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "s": prev_state,
+            "a": action,
+            "s_prime": current_state,
+            "r": float(reward),
+        }
+        append_jsonl(ROLLOUT_PATH, record)
+        data["_prev_state"] = current_state
+
     def _default_rationale(self, behavior: str, meta: Dict[str, Any]) -> Dict[str, Any]:
         why = meta.get("description") or f"Executed {behavior}"
         return {"why": str(why), "evidence": []}
+
+    def _log_web_trace(self, data: Dict[str, Any], event: Dict[str, Any]) -> None:
+        if not isinstance(data, dict):
+            return
+        trace = data.setdefault("web_trace", [])
+        if isinstance(trace, list):
+            trace.append(event)
+
+    def _triangulate_via_tools(self, ctx: Context, data: Dict[str, Any]) -> bool:
+        base_query = str(data.get("question") or data.get("text") or data.get("goal") or "")
+        if not base_query.strip():
+            return False
+        queries = [
+            base_query,
+            f"{base_query} latest analysis",
+            f"{base_query} site:.edu",
+            f"{base_query} site:.gov",
+        ]
+        original_query = data.get("query")
+        gained = False
+        trace = data.setdefault("web_trace", [])
+        for query in queries:
+            q = query.strip()
+            if not q:
+                continue
+            data["query"] = q[:240]
+            trace.append({"action": "web_search", "query": data["query"]})
+            search_result = self.execute("web_search", ctx)
+            if not isinstance(search_result, dict):
+                continue
+            search_output = search_result.get("output") or {}
+            search_list = search_output.get("search_results") or data.get("search_results") or []
+            for entry in search_list[:3]:
+                url = entry.get("url")
+                if not url:
+                    continue
+                data["url"] = url
+                trace.append({"action": "web_read", "url": url})
+                read_result = self.execute("web_read", ctx)
+                data.pop("url", None)
+                if read_result.get("ok"):
+                    gained = True
+            if gained:
+                break
+        if original_query is not None:
+            data["query"] = original_query
+        else:
+            data.pop("query", None)
+        return gained
+
+    def _rerun_generation(self, ctx: Context, data: Dict[str, Any], requires_llm: bool) -> Optional[Result]:
+        if requires_llm:
+            llama_result = self.execute("llama_generate", ctx)
+            if isinstance(llama_result, dict) and not llama_result.get("ok", True):
+                return llama_result
+        return self.execute("document_formatting", ctx)
 
 
 __all__ = ["Interpreter"]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 
 class UCB1:
@@ -41,6 +41,31 @@ class UCB1:
 
     def has_arms(self) -> bool:
         return bool(self.counts)
+
+    def to_dict(self) -> Dict[str, Dict[str, float]]:
+        return {
+            "counts": self.counts,
+            "totals": self.totals,
+        }
+
+    def load_state(self, payload: Dict[str, Any]) -> None:
+        counts = payload.get("counts", {})
+        totals = payload.get("totals", {})
+        if isinstance(counts, dict):
+            for arm, value in counts.items():
+                try:
+                    self.counts[arm] = int(value)
+                except (TypeError, ValueError):
+                    continue
+        if isinstance(totals, dict):
+            for arm, value in totals.items():
+                try:
+                    self.totals[arm] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        for arm in set(self.counts) | set(self.totals):
+            self.counts.setdefault(arm, 0)
+            self.totals.setdefault(arm, 0.0)
 
 
 __all__ = ["UCB1"]

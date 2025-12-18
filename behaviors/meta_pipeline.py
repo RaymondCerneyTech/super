@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from core.interfaces import Behavior, Context, Result
+from core.meta_controller import choose_bundle as select_bundle
 from core.meta_planner import build_features, choose_planners, generate_candidates
 
 
@@ -13,7 +14,8 @@ class MetaPipeline(Behavior):
 
     def run(self, ctx: Context) -> Result:
         data = ctx.setdefault("data", {})
-        requested = max(1, int(data.get("n_candidates") or 1))
+        raw_requested = data.get("n_candidates") or data.get("max_candidates") or 1
+        requested = max(1, int(raw_requested))
         max_planners = int(data.get("max_planners") or 0)
         max_candidates = int(data.get("max_candidates") or 0)
         judge_bundle = data.get("judge_bundle")
@@ -28,6 +30,23 @@ class MetaPipeline(Behavior):
             target_total = min(target_total, max_candidates)
         if target_total < 1:
             target_total = 1
+
+        bundle = select_bundle(
+            ctx,
+            planners=planner_names,
+            judge_bundle=judge_bundle,
+            budget=target_total,
+        )
+        planner_names = bundle["planners"]
+        judge_bundle = bundle["judges"]
+        model_bundle = bundle.get("models", [])
+        data["bundle_arm"] = bundle.get("arm_id")
+        data["planner_bundle"] = list(planner_names)
+        data["judge_bundle"] = list(judge_bundle)
+        if model_bundle:
+            data["model_bundle"] = list(model_bundle)
+            if not data.get("llama_profile"):
+                data["llama_profile"] = model_bundle[0]
 
         if len(planner_names) > target_total:
             planner_names = planner_names[:target_total]

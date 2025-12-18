@@ -4,3 +4,5 @@ requests
 fastapi
 uvicorn
 httpx
+torch
+beautifulsoup4

@@ -1,0 +1,20 @@
+name: python_eval
+description: Execute a small Python snippet in a sandbox.
+inputs: []
+outputs: [python_eval]
+args:
+  code:
+    type: str
+    required: true
+  timeout:
+    type: float
+    default: 5.0
+  max_output:
+    type: int
+    default: 4000
+preconditions:
+  - "true"
+effects: [python_result]
+cost: 1.0
+capabilities: [code]
+requires_explanation: true

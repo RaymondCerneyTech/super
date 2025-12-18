@@ -20,7 +20,7 @@ args:
     default: 15
   index_backend:
     type: str
-    default: tfidf
+    default: hnsw
   lang_any:
     type: bool
     default: false

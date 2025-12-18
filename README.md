@@ -123,34 +123,117 @@ Inspect learning trends:
 python tools/analyze_bandit.py --log-file logs/bandit.jsonl --window 50
 ```
 
+How This Agent Thinks (ReAct + MPC Loop)
+----------------------------------------
+
+- **Reason → Act trace.** Every plan stores `react_trace` inside `.ai/last_plan.json`, showing the alternating *thought → action → observation* chain. Inspect it to debug why a tool was chosen or why the loop stopped.
+- **World-model assists.** Adding `--mpc` enables short imagined rollouts via the trained dynamics ensemble in `.ai/world_model/dynamics_ensemble.pt`; variance penalties keep the planner from trusting high-uncertainty predictions.
+- **Self-consistency decoding.** Pass `--sc 5` (or higher) to gather multiple llama generations, majority-vote the outline, and re-attach citations for higher-fidelity answers.
+
+Run the full loop after ingesting context:
+
+```
+python main.py plan \
+  --goal "llm_output,grounded,cited,formatted" \
+  --text "Summarize our latest AI governance guidance for executives." \
+  --mpc \
+  --sc 5 \
+  --max-expansions 10 \
+  --explain
+```
+
+Sample `react_trace` excerpt:
+
+```json
+[
+  {"iteration": 1, "thought": "Need grounded evidence; perform retrieval or a fresh web search.", "action": "web_search", "observation": "updated search_results"},
+  {"iteration": 2, "thought": "Select a promising search result to read for supporting evidence.", "action": "web_read", "observation": "updated passages"},
+  {"iteration": 3, "thought": "Aggregate the collected passages into a coherent context.", "action": "aggregate", "observation": "updated aggregated_text"},
+  {"iteration": 4, "thought": "Compose the answer while grounding it in the aggregated evidence.", "action": "llama_generate", "observation": "updated answer"},
+  {"iteration": 5, "thought": "Goals appear satisfied; consider finalizing the plan.", "action": "finalize", "observation": "Finalizing plan"}
+]
+```
+
+Use the command output plus this trace to quickly validate whether the agent reached `grounded`, `cited`, and `formatted` before finishing. For automated evaluation, run `python main.py eval rag --dataset data/evals/sample.jsonl --faithfulness-threshold 0.75` to generate JSON/Markdown reports under `.ai/evals/`.
+
+Grounded Research Plans
+-----------------------
+
+Use the CLI to ingest your own material, generate a grounded memo, and review the saved output:
+
+```
+# 1. Ingest sources (repeat as needed)
+python main.py ingest --url https://en.wikipedia.org/wiki/Riemann_hypothesis --tags "riemann,number_theory"
+python main.py ingest --url https://www.claymath.org/millennium/problems/riemann-hypothesis --tags "riemann,research"
+
+# 2. Run a grounded, cited plan (LLM enabled)
+python main.py plan \
+  --goal "llm_output,formatted,grounded,cited" \
+  --text "Analyze current tactics for the Riemann Hypothesis and synthesize commentary (focus on strategy)." \
+  --llama-profile research_plan \
+  --llama-var topic="Riemann Hypothesis strategies" \
+  --max-expansions 8
+
+# Optional: fast preview without calling the LLM
+python main.py plan ... --skip-llama
+```
+
+Every run prints the memo (`Answer:`), explicit references (`Sources:`), the top retrieved passages, and writes the full context to `.ai/last_plan.json`. Re-run the plan after ingesting new documents to refresh the memo; use `--skip-llama` for a quick retrieval-only summary.
+
+World-Model Rollouts & MPC Planning
+-----------------------------------
+
+Plans that include `log_rollouts` append transitions to `.ai/rollouts.jsonl`. Train the lightweight dynamics ensemble with:
+
+```
+python scripts/train_dynamics.py --rollouts .ai/rollouts.jsonl --output .ai/dynamics_ensemble.pt --steps 500
+```
+
+Once trained, `mpc_plan` uses the ensemble for short-horizon lookahead (horizon=2, 12 samples) and picks the first action from the lowest-uncertainty sequence before the traditional chain continues.
+
+```
+# 1. Install extras (PyTorch CPU wheel)
+python -m pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+
+# 2. Generate a plan (records rollouts and last_plan.json)
+python main.py plan --goal "llm_output,formatted,grounded,cited" --text "..." --llama-profile research_plan --max-expansions 8
+
+# 3. Train or refresh the dynamics model
+python scripts/train_dynamics.py --rollouts .ai/rollouts.jsonl --output .ai/dynamics_ensemble.pt --steps 500
+
+# 4. Re-run the plan (mpc_plan now evaluates the learned model)
+python main.py plan --goal "llm_output,formatted,grounded,cited" --text "..." --llama-profile research_plan --max-expansions 8
+
+# 5. Optional: targeted smoke tests
+python -m pytest tests/test_retrieve_bootstrap.py tests/test_world_model.py -q
+```
+
 Add `--csv-out path/to/report.csv` to export rows for external plotting. Use `--no-bandit` on the CLI to disable bandit updates while still logging for comparisons.
 
 Web Ingestion + Verbose Answers
 -----------------------------------
 
-Quickly pull external knowledge into the local index and generate cited, sectioned answers directly from the CLI.
+Quickly pull external knowledge into the local index and generate cited, sectioned answers directly from the CLI. A common RAG workflow looks like:
 
-Ingest a single page:
+1. Ingest reference material (HTML is cleaned, boilerplate stripped, and language-detected):
 
-```
-python main.py ingest --url https://example.com/guide --tags "guide,example" --index-backend hnsw
-```
+    ```
+    python main.py ingest --url https://www.claymath.org/millennium-problems/riemann-hypothesis/ --tags "math,riemann" --index-backend hnsw
+    ```
 
-Ingest a feed:
-The HTML extractor keeps only the central article/main content and filters navigation or cookie banners; for best results, tag sources for precise retrieval.
+2. Optionally subscribe to a feed (15 item cap by default, override with `--limit`):
 
+    ```
+    python main.py ingest --rss https://feeds.feedburner.com/QuantaMagazineMathPhysics --limit 5 --tags "quanta,math" --index-backend hnsw
+    ```
 
-```
-python main.py ingest --rss https://example.com/feed.xml --index-backend hnsw
-```
+3. Ask for a long, cited answer. Add `--skip-llama` if llama.cpp is not configured; the planner still runs retrieval → aggregation → answer_verbose → document_formatting and stores the full trace in `.ai/last_plan.json`.
 
-Ask for a long, cited answer:
+    ```
+    python main.py ask --question "Explain current strategies for the Riemann Hypothesis" --cited --grounded --verbose --min-words 600 --index-backend hnsw --skip-llama --explain
+    ```
 
-```
-python main.py ask --question "Explain X in depth with examples" --cited --grounded --verbose --min-words 1200 --fresh 30 --index-backend hnsw --explain
-```
-
-Answers borrow the `answer_verbose` behavior, which coordinates retrieval, optional aggregation, verification, and citation formatting for grounded responses. Add `--fresh DAYS` to bias retrieval toward recently ingested material when timeliness matters.
+`answer_verbose` coordinates retrieval, aggregation, verification, and citation formatting for grounded responses. It reports the answer, inline citations, source list, top passages, and reward metrics in the CLI output and in the plan snapshot. Add `--fresh DAYS` to bias retrieval toward recent ingests when timeliness matters, or raise `--k-passages / --max-chars` to widen the context window.
 
 Phase-1 Tool Power Pack
 -----------------------

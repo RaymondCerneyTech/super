@@ -9,12 +9,15 @@ args:
   max_chars:
     type: int
     default: 12000
+  fresh_days:
+    type: int
+    default: 0
   tags:
     type: str
     default: ""
   index_backend:
     type: str
-    default: tfidf
+    default: hnsw
 preconditions:
   - "text_len >= 0"
 effects: [has_passages, fresh]

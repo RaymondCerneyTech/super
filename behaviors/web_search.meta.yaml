@@ -1,0 +1,23 @@
+name: web_search
+description: Search the web and return snippets.
+inputs: []
+outputs: [search_results]
+args:
+  query:
+    type: str
+    required: true
+  limit:
+    type: int
+    default: 5
+  domain_filter:
+    type: str
+    default: ""
+  fresh_days:
+    type: int
+    default: 0
+preconditions:
+  - "true"
+effects: [have_search_results]
+cost: 1.0
+capabilities: [web]
+requires_explanation: true

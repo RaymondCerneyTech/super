@@ -40,12 +40,11 @@ profiles:
   research_plan:
     description: "Outline strategies and obstacles for complex research topics."
     prompt: |
-      Draft a research memo addressing the topic below.
-      Include four sections:
-      1. Current understanding (with key results and references).
-      2. Promising approaches or heuristics.
-      3. Major obstacles or failure modes.
-      4. Recommended next steps (experiments, collaborations, resources).
+      You are preparing a grounded research memo using the supplied context only.
+      Write clear sections with headings, concise bullet points, and inline citations like [S1].
+      Every bullet must include at least one citation drawn from the provided source markers.
+      Close with a "Sources:" section listing each [S#] marker with its title and canonical URL.
+      If evidence is missing for a requested detail, state what is missing instead of guessing.
 
       Topic: {topic}
     n_predict: 320

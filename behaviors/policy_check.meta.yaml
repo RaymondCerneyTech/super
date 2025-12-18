@@ -13,7 +13,7 @@ keywords:
   - restricted
 preconditions:
   - "text_len > 0"
-effects: [compliant]
+effects: [compliant, cited]
 cost: 1.2
 capabilities: [analytic]
 requires_explanation: true

@@ -9,13 +9,13 @@ import yaml
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "ingest": {
-        "index_backend": "tfidf",
+        "index_backend": "hnsw",
         "tags": "",
         "limit": 15,
         "lang_any": False,
     },
     "ask": {
-        "index_backend": "tfidf",
+        "index_backend": "hnsw",
         "k_passages": 12,
         "max_chars": 12000,
         "tags": "",

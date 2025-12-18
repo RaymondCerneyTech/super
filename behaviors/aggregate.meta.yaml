@@ -9,7 +9,7 @@ args:
     enum: [concatenate, topic_blocks]
 preconditions:
   - "'has_passages' in flags"
-effects: [has_aggregate]
+effects: [has_aggregate, grounded]
 cost: 0.8
 capabilities: [analytic]
 requires_explanation: true

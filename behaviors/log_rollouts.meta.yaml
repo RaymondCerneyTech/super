@@ -1,0 +1,10 @@
+name: log_rollouts
+description: Record environment transitions for world-model training.
+inputs: []
+outputs: []
+preconditions:
+  - "true"
+effects: [rollout_logged]
+cost: 0.1
+capabilities: [analytic]
+requires_explanation: false

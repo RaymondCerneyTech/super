@@ -1,0 +1,20 @@
+name: web_read
+description: Fetch a web page, store it in the index, and return chunked passages.
+inputs: []
+outputs: [passages]
+args:
+  url:
+    type: str
+    required: true
+  index_backend:
+    type: str
+    default: hnsw
+  tags:
+    type: str
+    default: ""
+preconditions:
+  - "true"
+effects: [has_passages]
+cost: 1.2
+capabilities: [web]
+requires_explanation: true

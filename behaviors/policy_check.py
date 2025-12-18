@@ -42,7 +42,7 @@ class PolicyCheck(Behavior):
             "why": "Flagged and redacted prohibited phrases" if hits else "No policy violations detected",
             "evidence": evidence,
         }
-        effects = ["compliant"]
+        effects = ["compliant", "cited"]
 
         presence = 1.0
         specificity = min(1.0, len(evidence) / 3.0) if evidence else 0.0

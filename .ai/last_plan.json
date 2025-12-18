@@ -1,0 +1,655 @@
+{
+  "goal": [
+    "llm_output",
+    "formatted"
+  ],
+  "question": "Analyze and comment on current strategies for the Riemann Hypothesis research landscape.",
+  "answer": "Memo output [S1] [S2] [S3]\n\nSources:\n  [S1] Riemann Hypothesis - Current Tactics - file:///index/989b3d73-7df7-4d7c-8592-d3ca8ec6d771\n  [S2] Riemann Hypothesis - Obstacles and Open Problems - file:///index/8712613a-6f95-47d2-99e6-ba7967f4a00e\n  [S3] Riemann Hypothesis - Collaborative Resources - file:///index/09cacfcd-e515-4e13-8fec-a38dfbd9f09f",
+  "sources": [
+    {
+      "marker": "S1",
+      "title": "Riemann Hypothesis - Current Tactics",
+      "url": ""
+    },
+    {
+      "marker": "S2",
+      "title": "Riemann Hypothesis - Obstacles and Open Problems",
+      "url": ""
+    },
+    {
+      "marker": "S3",
+      "title": "Riemann Hypothesis - Collaborative Resources",
+      "url": ""
+    }
+  ],
+  "top_passages": [
+    {
+      "title": "Riemann Hypothesis - Current Tactics",
+      "url": "",
+      "doc_id": "989b3d73-7df7-4d7c-8592-d3ca8ec6d771"
+    },
+    {
+      "title": "Riemann Hypothesis - Obstacles and Open Problems",
+      "url": "",
+      "doc_id": "8712613a-6f95-47d2-99e6-ba7967f4a00e"
+    },
+    {
+      "title": "Riemann Hypothesis - Collaborative Resources",
+      "url": "",
+      "doc_id": "09cacfcd-e515-4e13-8fec-a38dfbd9f09f"
+    }
+  ],
+  "steps": [
+    {
+      "name": "meaning_infer",
+      "effects": [
+        "meaning_inferred"
+      ],
+      "reward": 1.0
+    },
+    {
+      "name": "retrieve",
+      "effects": [
+        "has_passages"
+      ],
+      "reward": 1.0
+    },
+    {
+      "name": "llama_generate",
+      "effects": [
+        "llm_output"
+      ],
+      "reward": 0.04
+    },
+    {
+      "name": "document_formatting",
+      "effects": [
+        "formatted",
+        "llm_output"
+      ],
+      "reward": 1.0
+    }
+  ],
+  "index_backend": "hnsw",
+  "mpc_mode": null,
+  "react_trace": [
+    {
+      "iteration": 1,
+      "thought": "Replayed cached behavior",
+      "action": "meaning_infer",
+      "args": {},
+      "observation": "cached execution",
+      "reward": 1.0
+    },
+    {
+      "iteration": 2,
+      "thought": "Replayed cached behavior",
+      "action": "retrieve",
+      "args": {},
+      "observation": "cached execution",
+      "reward": 1.0
+    },
+    {
+      "iteration": 3,
+      "thought": "Replayed cached behavior",
+      "action": "llama_generate",
+      "args": {},
+      "observation": "cached execution",
+      "reward": 0.04
+    },
+    {
+      "iteration": 4,
+      "thought": "Replayed cached behavior",
+      "action": "document_formatting",
+      "args": {},
+      "observation": "cached execution",
+      "reward": 1.0
+    }
+  ],
+  "sc_votes": [
+    {
+      "index": 0,
+      "text": "Memo output",
+      "markers": [
+        "S2",
+        "S3",
+        "S1"
+      ]
+    }
+  ],
+  "auto_query": [],
+  "rag_metrics": null,
+  "bundle_arm": "poem|planner_react+planner_tot+planner_fp|meta_judge|compose",
+  "model_bundle": [
+    "poem"
+  ],
+  "planner_bundle": [
+    "planner_react",
+    "planner_tot",
+    "planner_fp"
+  ],
+  "judge_bundle": [
+    "meta_judge"
+  ],
+  "web_trace": [],
+  "final_summary": "Memo output [S1] [S2] [S3]\nSources:\n[S1] Riemann Hypothesis - Current Tactics -\nfile:///index/989b3d73-7df7-4d7c-8592-d3ca8ec6d771\n[S2] Riemann Hypothesis - Obstacles and Open Problems -\nfile:///index/8712613a-6f95-47d2-99e6-ba7967f4a00e\n[S3] Riemann Hypothesis - Collaborative Resources -\nfile:///index/09cacfcd-e515-4e13-8fec-a38dfbd9f09f\n\n### Analysis Notes\n- Obstacles: [S1]\n- Key obstacles include the lack of a spectral model covering all zeros, the difficulty of controlling error terms in explicit formulae, and the scarcity of techniques that connect local statistics with global L-function behaviour.\n- Resources: [S2]\n- Collaborative resources include shared zero tables on LMFDB, Clay Mathematics Institute surveys highlighting strategic roadmaps, and open-source code for zero-finding and explicit formula experiments.",
+  "unmet_requirements": [],
+  "reward": {
+    "readability": 0.0,
+    "preservation": 0.0,
+    "brevity": 1.0,
+    "overall": 1.0,
+    "fluency": 0.95,
+    "creativity": 0.625,
+    "relevance": 0.4024390243902439,
+    "rule_score": 0.8,
+    "explanation_presence": 1.0,
+    "explanation_specificity": 0.3333333333333333,
+    "explanation_alignment": 0.0
+  },
+  "data": {
+    "tools_registry": {
+      "web_get": {
+        "name": "web_get",
+        "affordances": [
+          "web",
+          "fetch"
+        ],
+        "fn": "<function web_get at 0x000001FDA2D5EAC0>"
+      },
+      "html_to_text": {
+        "name": "html_to_text",
+        "affordances": [
+          "web",
+          "clean"
+        ],
+        "fn": "<function html_to_text at 0x000001FDA2D5EDE0>"
+      },
+      "extract_links": {
+        "name": "extract_links",
+        "affordances": [
+          "web",
+          "analyze"
+        ],
+        "fn": "<function extract_links at 0x000001FDA2D68AE0>"
+      },
+      "extract_facts": {
+        "name": "extract_facts",
+        "affordances": [
+          "web",
+          "analyze"
+        ],
+        "fn": "<function extract_facts at 0x000001FDA2D68E00>"
+      },
+      "table_detect": {
+        "name": "table_detect",
+        "affordances": [
+          "data",
+          "parse"
+        ],
+        "fn": "<function table_detect at 0x000001FDA2C7FB00>"
+      },
+      "csv_summary": {
+        "name": "csv_summary",
+        "affordances": [
+          "data",
+          "summarize"
+        ],
+        "fn": "<function csv_summary at 0x000001FDA2C7FC40>"
+      },
+      "json_query": {
+        "name": "json_query",
+        "affordances": [
+          "data",
+          "query"
+        ],
+        "fn": "<function json_query at 0x000001FDA2C7FEC0>"
+      },
+      "dedupe_lines": {
+        "name": "dedupe_lines",
+        "affordances": [
+          "data",
+          "clean"
+        ],
+        "fn": "<function dedupe_lines at 0x000001FDA2C7FF60>"
+      },
+      "math_eval_safe": {
+        "name": "math_eval_safe",
+        "affordances": [
+          "math",
+          "compute"
+        ],
+        "fn": "<function math_eval_safe at 0x000001FDA2C980E0>"
+      },
+      "unit_convert_basic": {
+        "name": "unit_convert_basic",
+        "affordances": [
+          "math",
+          "units"
+        ],
+        "fn": "<function unit_convert_basic at 0x000001FDA2C98220>"
+      },
+      "causal_dot_builder": {
+        "name": "causal_dot_builder",
+        "affordances": [
+          "plan",
+          "causal"
+        ],
+        "fn": "<function causal_dot_builder at 0x000001FDA2C98400>"
+      },
+      "timeline_normalize": {
+        "name": "timeline_normalize",
+        "affordances": [
+          "plan",
+          "time"
+        ],
+        "fn": "<function timeline_normalize at 0x000001FDA2C98F40>"
+      },
+      "read_file": {
+        "name": "read_file",
+        "affordances": [
+          "code",
+          "io"
+        ],
+        "fn": "<function read_file at 0x000001FDA0115DA0>"
+      },
+      "write_file": {
+        "name": "write_file",
+        "affordances": [
+          "code",
+          "io"
+        ],
+        "fn": "<function write_file at 0x000001FDA0115E40>"
+      },
+      "append_file": {
+        "name": "append_file",
+        "affordances": [
+          "code",
+          "io"
+        ],
+        "fn": "<function append_file at 0x000001FDA0115EE0>"
+      },
+      "grep_repo": {
+        "name": "grep_repo",
+        "affordances": [
+          "code",
+          "search_repo"
+        ],
+        "fn": "<function grep_repo at 0x000001FDA0116020>"
+      },
+      "run_pytest": {
+        "name": "run_pytest",
+        "affordances": [
+          "code",
+          "run_tests"
+        ],
+        "fn": "<function run_pytest at 0x000001FDA01160C0>"
+      },
+      "reflection_add": {
+        "name": "reflection_add",
+        "affordances": [
+          "learn",
+          "reflect"
+        ],
+        "fn": "<function reflection_add at 0x000001FDA2C7F920>"
+      },
+      "reflection_get": {
+        "name": "reflection_get",
+        "affordances": [
+          "learn",
+          "reflect"
+        ],
+        "fn": "<function reflection_get at 0x000001FDA2C984A0>"
+      },
+      "cache_put": {
+        "name": "cache_put",
+        "affordances": [
+          "memo",
+          "cache"
+        ],
+        "fn": "<function cache_put at 0x000001FDA2C98CC0>"
+      },
+      "cache_get": {
+        "name": "cache_get",
+        "affordances": [
+          "memo",
+          "cache"
+        ],
+        "fn": "<function cache_get at 0x000001FDA2C98D60>"
+      },
+      "rewrite_clarity": {
+        "name": "rewrite_clarity",
+        "affordances": [
+          "compose",
+          "generic"
+        ],
+        "fn": "<function rewrite_clarity at 0x000001FDA2C991C0>"
+      },
+      "rewrite_style": {
+        "name": "rewrite_style",
+        "affordances": [
+          "compose",
+          "style"
+        ],
+        "fn": "<function rewrite_style at 0x000001FDA2D68EA0>"
+      },
+      "summarize_bullets": {
+        "name": "summarize_bullets",
+        "affordances": [
+          "summarize",
+          "compose"
+        ],
+        "fn": "<function summarize_bullets at 0x000001FDA2D68F40>"
+      },
+      "numbers_guard": {
+        "name": "numbers_guard",
+        "affordances": [
+          "numbers",
+          "guard"
+        ],
+        "fn": "<function numbers_guard at 0x000001FDA2D68FE0>"
+      },
+      "policy_check_lite": {
+        "name": "policy_check_lite",
+        "affordances": [
+          "policy",
+          "analyze"
+        ],
+        "fn": "<function policy_check_lite at 0x000001FDA2D69080>"
+      },
+      "sentiment_label": {
+        "name": "sentiment_label",
+        "affordances": [
+          "sentiment",
+          "analyze"
+        ],
+        "fn": "<function sentiment_label at 0x000001FDA2D69120>"
+      },
+      "extract_actions": {
+        "name": "extract_actions",
+        "affordances": [
+          "plan",
+          "analyze"
+        ],
+        "fn": "<function extract_actions at 0x000001FDA2D691C0>"
+      },
+      "code_read": {
+        "name": "code_read",
+        "affordances": [
+          "code_read",
+          "compose"
+        ],
+        "fn": "<function read_file at 0x000001FDA0115DA0>"
+      },
+      "code_write": {
+        "name": "code_write",
+        "affordances": [
+          "code_write",
+          "compose"
+        ],
+        "fn": "<function write_file at 0x000001FDA0115E40>"
+      },
+      "search_repo": {
+        "name": "search_repo",
+        "affordances": [
+          "search_repo",
+          "plan"
+        ],
+        "fn": "<function grep at 0x000001FDA0116160>"
+      },
+      "run_tests": {
+        "name": "run_tests",
+        "affordances": [
+          "run_tests",
+          "plan"
+        ],
+        "fn": "<function run_pytest at 0x000001FDA01160C0>"
+      }
+    },
+    "text": "Memo output [S1] [S2] [S3]\n\nSources:\n  [S1] Riemann Hypothesis - Current Tactics - file:///index/989b3d73-7df7-4d7c-8592-d3ca8ec6d771\n  [S2] Riemann Hypothesis - Obstacles and Open Problems - file:///index/8712613a-6f95-47d2-99e6-ba7967f4a00e\n  [S3] Riemann Hypothesis - Collaborative Resources - file:///index/09cacfcd-e515-4e13-8fec-a38dfbd9f09f",
+    "goal_flags": [
+      "llm_output",
+      "formatted"
+    ],
+    "question": "Analyze and comment on current strategies for the Riemann Hypothesis research landscape.",
+    "llama": {
+      "profile": "research_plan",
+      "vars": {
+        "topic": "Riemann Hypothesis strategies"
+      }
+    },
+    "llama_profile": "research_plan",
+    "llama_vars": {
+      "topic": "Riemann Hypothesis strategies"
+    },
+    "auto_bootstrap": true,
+    "allow_ungrounded_profile": true,
+    "model_bundle": [
+      "poem"
+    ],
+    "planner_bundle": [
+      "planner_react",
+      "planner_tot",
+      "planner_fp"
+    ],
+    "judge_bundle": [
+      "meta_judge"
+    ],
+    "bundle_arm": "poem|planner_react+planner_tot+planner_fp|meta_judge|compose",
+    "auto_query": [],
+    "sc_votes": [
+      {
+        "index": 0,
+        "text": "Memo output",
+        "markers": [
+          "S2",
+          "S3",
+          "S1"
+        ]
+      }
+    ],
+    "_prev_state": {
+      "meaning": "analyze_and_comment",
+      "has_sources": true,
+      "k_passages": 12,
+      "fresh_days": 0,
+      "tokens_out": 32,
+      "profile": "research_plan"
+    },
+    "meaning": "analyze_and_comment",
+    "_last_action": {
+      "name": "document_formatting",
+      "args": {
+        "format_style": "business",
+        "wrap_width": 80
+      }
+    },
+    "rewards": {
+      "meaning_infer": {
+        "overall": 1.0,
+        "fluency": 0.9,
+        "creativity": 0.0,
+        "relevance": 0.5,
+        "explanation_presence": 1.0,
+        "explanation_specificity": 1.0,
+        "explanation_alignment": 0.5
+      },
+      "retrieve": {
+        "overall": 1.0,
+        "explanation_presence": 1.0,
+        "explanation_specificity": 1.0,
+        "explanation_alignment": 0.5
+      },
+      "llama_generate": {
+        "overall": 0.04,
+        "fluency": 0.95,
+        "creativity": 0.0,
+        "relevance": 1.0,
+        "explanation_presence": 1.0,
+        "explanation_specificity": 0.5,
+        "explanation_alignment": 1.0
+      },
+      "document_formatting": {
+        "readability": 0.0,
+        "preservation": 0.0,
+        "brevity": 1.0,
+        "overall": 1.0,
+        "fluency": 0.95,
+        "creativity": 0.625,
+        "relevance": 0.4024390243902439,
+        "rule_score": 0.8,
+        "explanation_presence": 1.0,
+        "explanation_specificity": 0.3333333333333333,
+        "explanation_alignment": 0.0
+      }
+    },
+    "checks": {
+      "meaning_infer": {},
+      "retrieve": {},
+      "llama_generate": {},
+      "document_formatting": {
+        "length_leq": 1.0,
+        "similarity_cosine": 0.0
+      }
+    },
+    "k_passages": 12,
+    "max_chars": 12000,
+    "fresh_days": 0,
+    "tags": "",
+    "index_backend": "hnsw",
+    "triangulation_k": 1,
+    "source_domains": [
+      "builtin:rh_current_tactics",
+      "builtin:rh_obstacles",
+      "builtin:rh_resources"
+    ],
+    "triangulation_domains": [
+      {
+        "domain": "builtin:rh_current_tactics",
+        "count": 1
+      },
+      {
+        "domain": "builtin:rh_obstacles",
+        "count": 1
+      },
+      {
+        "domain": "builtin:rh_resources",
+        "count": 1
+      }
+    ],
+    "triangulation_met": true,
+    "passages": [
+      {
+        "doc_id": "989b3d73-7df7-4d7c-8592-d3ca8ec6d771",
+        "score": 0.2748138269382453,
+        "adjusted_score": 0.2748138251654033,
+        "recency": 0.9999999784964488,
+        "text": "Current tactics against the Riemann Hypothesis mix classical analytic number theory with heavy computation. Random matrix heuristics predict pair correlation of zeta zeros and guide expectations for extreme values. Researchers refine explicit formulae to transfer zero information into bounds for primes, and analyze Li/Keiper coefficients and de Bruijn–Newman constants for signs of instability. Supercomputers extend zero verification past 10^13 along the critical line, while machine-learning classifiers search for anomalies in zero spacings that could hint at counterexamples.",
+        "meta": {
+          "source_id": "builtin:rh_current_tactics",
+          "title": "Riemann Hypothesis - Current Tactics",
+          "origin": "builtin_seed",
+          "fetched_ts": "2025-11-19T05:53:25+00:00",
+          "published_ts": "2025-11-19T05:53:25+00:00",
+          "ingested_ts": "2025-11-19T05:53:25+00:00",
+          "doc_id": "989b3d73-7df7-4d7c-8592-d3ca8ec6d771",
+          "url": "file:///index/989b3d73-7df7-4d7c-8592-d3ca8ec6d771"
+        },
+        "tags": [
+          "math",
+          "number theory",
+          "riemann hypothesis"
+        ],
+        "snippet": "Current tactics against the Riemann Hypothesis mix classical analytic number theory with heavy computation. Random matrix heuristics predict pair correlation of zeta zeros and guide expectations for extreme values. Researchers refine explicit formulae to transfer zero information into bounds for primes, and analyze Li/Keiper coefficients and de Bruijn–Newman constants for signs of instability. Supercomputers extend zero verification past 10^13 along the critical line, while machine-learning clas"
+      },
+      {
+        "doc_id": "8712613a-6f95-47d2-99e6-ba7967f4a00e",
+        "score": 0.10766982755109443,
+        "adjusted_score": 0.10766982685650932,
+        "recency": 0.9999999784964488,
+        "text": "Key obstacles include the lack of a spectral model covering all zeros, the difficulty of controlling error terms in explicit formulae, and the scarcity of techniques that connect local statistics with global L-function behaviour. Resonance methods and correlation estimates have not yet produced contradictions, and conductor growth for higher-degree L-functions makes brute-force verification expensive. Attempts to adapt Selberg-style trace formulae or quantum chaos analogies remain incomplete.",
+        "meta": {
+          "source_id": "builtin:rh_obstacles",
+          "title": "Riemann Hypothesis - Obstacles and Open Problems",
+          "origin": "builtin_seed",
+          "fetched_ts": "2025-11-19T05:53:25+00:00",
+          "published_ts": "2025-11-19T05:53:25+00:00",
+          "ingested_ts": "2025-11-19T05:53:25+00:00",
+          "doc_id": "8712613a-6f95-47d2-99e6-ba7967f4a00e",
+          "url": "file:///index/8712613a-6f95-47d2-99e6-ba7967f4a00e"
+        },
+        "tags": [
+          "math",
+          "obstacles",
+          "riemann hypothesis"
+        ],
+        "snippet": "Key obstacles include the lack of a spectral model covering all zeros, the difficulty of controlling error terms in explicit formulae, and the scarcity of techniques that connect local statistics with global L-function behaviour. Resonance methods and correlation estimates have not yet produced contradictions, and conductor growth for higher-degree L-functions makes brute-force verification expensive. Attempts to adapt Selberg-style trace formulae or quantum chaos analogies remain incomplete."
+      },
+      {
+        "doc_id": "09cacfcd-e515-4e13-8fec-a38dfbd9f09f",
+        "score": 0.10577794375142173,
+        "adjusted_score": 0.10577794306904129,
+        "recency": 0.9999999784964488,
+        "text": "Collaborative resources include shared zero tables on LMFDB, Clay Mathematics Institute surveys highlighting strategic roadmaps, and open-source code for zero-finding and explicit formula experiments. Polymath proposals suggest combining automated verification with new analytic ideas, and recent surveys recommend integrating data-driven conjectures with rigorous analytic frameworks.",
+        "meta": {
+          "source_id": "builtin:rh_resources",
+          "title": "Riemann Hypothesis - Collaborative Resources",
+          "origin": "builtin_seed",
+          "fetched_ts": "2025-11-19T05:53:25+00:00",
+          "published_ts": "2025-11-19T05:53:25+00:00",
+          "ingested_ts": "2025-11-19T05:53:25+00:00",
+          "doc_id": "09cacfcd-e515-4e13-8fec-a38dfbd9f09f",
+          "url": "file:///index/09cacfcd-e515-4e13-8fec-a38dfbd9f09f"
+        },
+        "tags": [
+          "math",
+          "resources",
+          "riemann hypothesis"
+        ],
+        "snippet": "Collaborative resources include shared zero tables on LMFDB, Clay Mathematics Institute surveys highlighting strategic roadmaps, and open-source code for zero-finding and explicit formula experiments. Polymath proposals suggest combining automated verification with new analytic ideas, and recent surveys recommend integrating data-driven conjectures with rigorous analytic frameworks."
+      }
+    ],
+    "sources": [
+      {
+        "marker": "S1",
+        "title": "Riemann Hypothesis - Current Tactics",
+        "url": ""
+      },
+      {
+        "marker": "S2",
+        "title": "Riemann Hypothesis - Obstacles and Open Problems",
+        "url": ""
+      },
+      {
+        "marker": "S3",
+        "title": "Riemann Hypothesis - Collaborative Resources",
+        "url": ""
+      }
+    ],
+    "source_passages": {
+      "S1": "Current tactics against the Riemann Hypothesis mix classical analytic number theory with heavy computation. Random matrix heuristics predict pair correlation of zeta zeros and guide expectations for extreme values. Researchers refine explicit formulae to transfer zero information into bounds for primes, and analyze Li/Keiper coefficients and de Bruijn–Newman constants for signs of instability. Supercomputers extend zero verification past 10^13 along the critical line, while machine-learning classifiers search for anomalies in zero spacings that could hint at counterexamples.",
+      "S2": "Key obstacles include the lack of a spectral model covering all zeros, the difficulty of controlling error terms in explicit formulae, and the scarcity of techniques that connect local statistics with global L-function behaviour. Resonance methods and correlation estimates have not yet produced contradictions, and conductor growth for higher-degree L-functions makes brute-force verification expensive. Attempts to adapt Selberg-style trace formulae or quantum chaos analogies remain incomplete.",
+      "S3": "Collaborative resources include shared zero tables on LMFDB, Clay Mathematics Institute surveys highlighting strategic roadmaps, and open-source code for zero-finding and explicit formula experiments. Polymath proposals suggest combining automated verification with new analytic ideas, and recent surveys recommend integrating data-driven conjectures with rigorous analytic frameworks."
+    },
+    "aggregated_text": "## Key Findings\n- Current tactics against the Riemann Hypothesis mix classical analytic number theory with heavy computation. Random matrix heuristics predict pair correlation of zeta zeros and guide expectations for extreme values. Researchers refine explicit formulae to transfer zero information into bounds for primes, and analyze Li/Keiper coefficients and de Bruijn–Newman constants for signs of instability. Supercomputers extend zero verification past 10^13 along the critical line, while machine-learning... [S1]\n- Key obstacles include the lack of a spectral model covering all zeros, the difficulty of controlling error terms in explicit formulae, and the scarcity of techniques that connect local statistics with global L-function behaviour. Resonance methods and correlation estimates have not yet produced contradictions, and conductor growth for higher-degree L-functions makes brute-force verification expensive. Attempts to adapt Selberg-style trace formulae or quantum chaos analogies remain incomplete. [S2]\n- Collaborative resources include shared zero tables on LMFDB, Clay Mathematics Institute surveys highlighting strategic roadmaps, and open-source code for zero-finding and explicit formula experiments. Polymath proposals suggest combining automated verification with new analytic ideas, and recent surveys recommend integrating data-driven conjectures with rigorous analytic frameworks. [S3]",
+    "llama_prompt": "Analyze and comment on current strategies for the Riemann Hypothesis research landscape.",
+    "llama_output": {
+      "text": "Memo output [S1] [S2] [S3]\n\nSources:\n  [S1] Riemann Hypothesis - Current Tactics - file:///index/989b3d73-7df7-4d7c-8592-d3ca8ec6d771\n  [S2] Riemann Hypothesis - Obstacles and Open Problems - file:///index/8712613a-6f95-47d2-99e6-ba7967f4a00e\n  [S3] Riemann Hypothesis - Collaborative Resources - file:///index/09cacfcd-e515-4e13-8fec-a38dfbd9f09f",
+      "stderr": "",
+      "command": "llama",
+      "model": "C:\\Users\\cerne\\AppData\\Local\\Temp\\pytest-of-cerne\\pytest-10\\test_cli_plan_research_profile0\\model.gguf",
+      "profile": "research_plan"
+    },
+    "answer": "Memo output [S1] [S2] [S3]\n\nSources:\n  [S1] Riemann Hypothesis - Current Tactics - file:///index/989b3d73-7df7-4d7c-8592-d3ca8ec6d771\n  [S2] Riemann Hypothesis - Obstacles and Open Problems - file:///index/8712613a-6f95-47d2-99e6-ba7967f4a00e\n  [S3] Riemann Hypothesis - Collaborative Resources - file:///index/09cacfcd-e515-4e13-8fec-a38dfbd9f09f",
+    "_llm_generated": true,
+    "has_citable_sources": true,
+    "stderr": "",
+    "command": "llama",
+    "model": "C:\\Users\\cerne\\AppData\\Local\\Temp\\pytest-of-cerne\\pytest-10\\test_cli_plan_research_profile0\\model.gguf",
+    "profile": "research_plan",
+    "format_style": "business",
+    "wrap_width": 80,
+    "formatted_text": "Memo output [S1] [S2] [S3]\nSources:\n[S1] Riemann Hypothesis - Current Tactics -\nfile:///index/989b3d73-7df7-4d7c-8592-d3ca8ec6d771\n[S2] Riemann Hypothesis - Obstacles and Open Problems -\nfile:///index/8712613a-6f95-47d2-99e6-ba7967f4a00e\n[S3] Riemann Hypothesis - Collaborative Resources -\nfile:///index/09cacfcd-e515-4e13-8fec-a38dfbd9f09f\n\n### Analysis Notes\n- Obstacles: [S1]\n- Key obstacles include the lack of a spectral model covering all zeros, the difficulty of controlling error terms in explicit formulae, and the scarcity of techniques that connect local statistics with global L-function behaviour.\n- Resources: [S2]\n- Collaborative resources include shared zero tables on LMFDB, Clay Mathematics Institute surveys highlighting strategic roadmaps, and open-source code for zero-finding and explicit formula experiments.",
+    "final_summary": "Memo output [S1] [S2] [S3]\nSources:\n[S1] Riemann Hypothesis - Current Tactics -\nfile:///index/989b3d73-7df7-4d7c-8592-d3ca8ec6d771\n[S2] Riemann Hypothesis - Obstacles and Open Problems -\nfile:///index/8712613a-6f95-47d2-99e6-ba7967f4a00e\n[S3] Riemann Hypothesis - Collaborative Resources -\nfile:///index/09cacfcd-e515-4e13-8fec-a38dfbd9f09f\n\n### Analysis Notes\n- Obstacles: [S1]\n- Key obstacles include the lack of a spectral model covering all zeros, the difficulty of controlling error terms in explicit formulae, and the scarcity of techniques that connect local statistics with global L-function behaviour.\n- Resources: [S2]\n- Collaborative resources include shared zero tables on LMFDB, Clay Mathematics Institute surveys highlighting strategic roadmaps, and open-source code for zero-finding and explicit formula experiments."
+  }
+}

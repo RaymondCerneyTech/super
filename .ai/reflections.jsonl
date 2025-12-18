@@ -1,1 +1,1 @@
-{"cue": "summarize", "fingerprint": "06ff4d63612b7814", "reflection": "summarize:numbers_guard underperformed (summarize_bullets:5-bullet summary; numbers_guard:numbers ok); consider alternate tool or cue next time.", "win": 0, "total": 56}
+{"cue": "summarize", "fingerprint": "06ff4d63612b7814", "reflection": "summarize:numbers_guard underperformed (summarize_bullets:5-bullet summary; numbers_guard:numbers ok); consider alternate tool or cue next time.", "win": 0, "total": 144}

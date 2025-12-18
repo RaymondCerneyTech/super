@@ -43,8 +43,14 @@ class Document:
     tokens: List[str] = field(default_factory=list)
 
 
+LEGACY_BACKEND_ALIASES = {
+    "tfidf": "hnsw",
+}
+
+
 class DocumentIndex:
-    def __init__(self, backend: str = "tfidf", name: str = "default") -> None:
+    def __init__(self, backend: str = "hnsw", name: str = "default") -> None:
+        backend = LEGACY_BACKEND_ALIASES.get(backend, backend)
         self.backend = backend
         self.name = name
         root_env = os.getenv("SUPER_INDEX_DIR")
@@ -105,9 +111,21 @@ class DocumentIndex:
         meta.setdefault("published_ts", meta.get("fetched_ts", now_iso))
         meta.setdefault("ingested_ts", now_iso)
         tags_list = sorted({str(tag).strip().lower() for tag in (tags or []) if str(tag).strip()})
-        doc = Document(doc_id=meta.get("doc_id", str(uuid.uuid4())), text=text, meta=meta, tags=tags_list)
+        doc_id = str(meta.get("doc_id") or uuid.uuid4())
+        meta["doc_id"] = doc_id
+        url_value = str(meta.get("url") or "").strip()
+        if not url_value:
+            path_hint = meta.get("path")
+            if isinstance(path_hint, str) and path_hint.strip():
+                try:
+                    url_value = Path(path_hint).resolve().as_uri()
+                except Exception:
+                    url_value = ""
+            if not url_value:
+                url_value = f"file:///index/{doc_id}"
+            meta["url"] = url_value
+        doc = Document(doc_id=doc_id, text=text, meta=meta, tags=tags_list)
         doc.tokens = _tokenize(text)
-        doc.meta["doc_id"] = doc.doc_id
         self.docs.append(doc)
         self._persist(doc)
         return doc
@@ -196,7 +214,8 @@ class DocumentIndex:
 _INDEX_CACHE: Dict[Tuple[str, str], DocumentIndex] = {}
 
 
-def get_index(backend: str = "tfidf", name: str = "default") -> DocumentIndex:
+def get_index(backend: str = "hnsw", name: str = "default") -> DocumentIndex:
+    backend = LEGACY_BACKEND_ALIASES.get(backend, backend)
     key = (backend, name)
     if key not in _INDEX_CACHE:
         _INDEX_CACHE[key] = DocumentIndex(backend=backend, name=name)

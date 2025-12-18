@@ -25,7 +25,7 @@ class IngestWeb(Behavior):
         path = data.get("path") or ctx.get("path")
         tags_raw = data.get("tags") or ctx.get("tags") or ""
         tag_list = self._normalize_tags(tags_raw)
-        backend = (data.get("index_backend") or ctx.get("index_backend") or "tfidf").lower()
+        backend = (data.get("index_backend") or ctx.get("index_backend") or "hnsw").lower()
         limit = int(data.get("limit") or ctx.get("limit") or 15)
         lang_any = bool(data.get("lang_any") or ctx.get("lang_any"))
         logs: List[str] = []
@@ -105,6 +105,7 @@ class IngestWeb(Behavior):
             data["ingest_log"] = previous_log + ingested
         else:
             data["ingest_log"] = list(ingested)
+        data["index_backend"] = backend
         rationale = {
             "why": "Web documents ingested",
             "evidence": [

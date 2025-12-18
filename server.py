@@ -14,7 +14,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from core.config import load_config
-from core.planner import normalise_goal_flags, plan
+from core.planner import normalise_goal_flags
+from core.meta_controller import choose_bundle, record_bundle_outcome
+from core import planner as planner_module
 from core.rewards import ensure_reward_dict
 from main import build_runtime
 from tools.registry import TOOLS as TOOL_REGISTRY
@@ -97,7 +99,7 @@ def api_ask(req: AskRequest) -> AskResponse:
 
     ask_cfg = config.get("ask", {}) if isinstance(config.get("ask"), dict) else {}
 
-    index_backend = req.index_backend or ask_cfg.get("index_backend", "tfidf")
+    index_backend = req.index_backend or ask_cfg.get("index_backend", "hnsw")
     k_passages = req.k_passages if req.k_passages is not None else ask_cfg.get("k_passages", 12)
     max_chars = req.max_chars if req.max_chars is not None else ask_cfg.get("max_chars", 12000)
     tags = req.tags if req.tags is not None else ask_cfg.get("tags", "")
@@ -162,11 +164,21 @@ def api_ask(req: AskRequest) -> AskResponse:
         ctx["data"]["max_words"] = max_words
     if fresh_days:
         ctx["data"]["fresh_days"] = fresh_days
+    if "grounded" in goal_terms or "cited" in goal_terms:
+        ctx["data"]["apply_research_prompt"] = True
+    else:
+        ctx["data"].setdefault("allow_ungrounded_profile", True)
     cluster = router.cluster_hint(goal_str, ctx)
     ctx["router"]["cluster_bias"] = cluster
 
     goal_flags = normalise_goal_flags(goal_str)
-    plan_result = plan(
+    choose_bundle(
+        ctx,
+        planners=["planner_react", "planner_tot", "planner_fp"],
+        judge_bundle=ctx["data"].get("judge_bundle"),
+        budget=max_expansions,
+    )
+    plan_result = planner_module.plan(
         goal_flags,
         ctx,
         registry,
@@ -215,7 +227,28 @@ def api_ask(req: AskRequest) -> AskResponse:
             status_code=404,
             detail=f"No plan output produced. Remaining goals: {', '.join(remaining)}",
         )
-    sources = [src.get("source", src) for src in final_data.get("sources", []) if src]
+    raw_sources = final_data.get("sources", []) or []
+    normalized_sources: List[str] = []
+    for entry in raw_sources:
+        if isinstance(entry, str):
+            normalized_sources.append(entry)
+            continue
+        if isinstance(entry, dict):
+            marker = str(entry.get("marker") or "").strip()
+            title = str(entry.get("source") or entry.get("title") or "").strip()
+            url = str(entry.get("url") or "").strip()
+            if marker and url:
+                label = title or url
+                normalized_sources.append(f"{marker} {label} - {url}")
+            elif title:
+                normalized_sources.append(title)
+            else:
+                normalized_sources.append(marker or url)
+            continue
+        normalized_sources.append(str(entry))
+    sources = [source for source in normalized_sources if source]
+
+    record_bundle_outcome(final_ctx, final_rewards)
 
     return AskResponse(
         answer=answer,
@@ -253,7 +286,13 @@ def api_plan(req: PlanRequest) -> PlanResponse:
     ctx["router"]["cluster_bias"] = cluster
 
     goal_flags = normalise_goal_flags(req.goal)
-    plan_result = plan(
+    choose_bundle(
+        ctx,
+        planners=["planner_react", "planner_tot", "planner_fp"],
+        judge_bundle=ctx["data"].get("judge_bundle"),
+        budget=req.max_expansions or plan_cfg.get("max_expansions", 20),
+    )
+    plan_result = planner_module.plan(
         goal_flags,
         ctx,
         registry,
@@ -273,6 +312,7 @@ def api_plan(req: PlanRequest) -> PlanResponse:
 
     final_ctx = plan_result.get("ctx", ctx)
     final_rewards = ensure_reward_dict(steps[-1][1].get("rewards", {}))
+    record_bundle_outcome(final_ctx, final_rewards)
     if not req.text:
         final_data = final_ctx.get("data", {})
         summary_text = final_data.get("summary")

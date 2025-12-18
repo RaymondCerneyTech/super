@@ -31,17 +31,17 @@ def test_retrieval_prefers_recent(monkeypatch, tmp_path):
     with patch("core.fetch.fetch_url", fake_fetch), patch("core.fetch.is_probably_english", lambda text: True):
         interpreter.execute(
             "ingest_web",
-            {"data": {"url": "https://example.com/old", "index_backend": "tfidf", "tags": "governance"}},
+            {"data": {"url": "https://example.com/old", "index_backend": "hnsw", "tags": "governance"}},
         )
         interpreter.execute(
             "ingest_web",
-            {"data": {"url": "https://example.com/new", "index_backend": "tfidf", "tags": "governance"}},
+            {"data": {"url": "https://example.com/new", "index_backend": "hnsw", "tags": "governance"}},
         )
 
     ctx = {
         "data": {
             "question": "What are the latest AI governance practices?",
-            "index_backend": "tfidf",
+            "index_backend": "hnsw",
             "k_passages": 3,
             "max_chars": 2000,
             "tags": "governance",

@@ -42,7 +42,7 @@ def test_ingest_retrieve_answer_verbose(monkeypatch: pytest.MonkeyPatch, interpr
         "data": {
             "url": "https://example.com/ai-governance",
             "tags": "ai,governance",
-            "index_backend": "tfidf",
+            "index_backend": "hnsw",
             "question": "How should teams govern AI systems responsibly?",
             "k_passages": 5,
             "max_chars": 4000,

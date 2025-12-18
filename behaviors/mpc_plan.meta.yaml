@@ -1,0 +1,10 @@
+name: mpc_plan
+description: Use learned dynamics to propose the next high-reward action.
+inputs: []
+outputs: [next_action]
+preconditions:
+  - "true"
+effects: [next_action_ready]
+cost: 0.2
+capabilities: [analytic]
+requires_explanation: false
